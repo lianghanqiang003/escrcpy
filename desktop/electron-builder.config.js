@@ -20,14 +20,6 @@ export default {
 
   asarUnpack: nativeModuleAsarUnpack,
 
-  extraResources: [
-    {
-      from: '../packages/madb/dist',
-      to: 'extra/common/madb',
-      filter: ['index.mjs'],
-    },
-  ],
-
   win,
   nsis,
   portable,
@@ -44,7 +36,7 @@ export default {
 
   publish: {
     provider: 'github',
-    owner: 'viarotel-org',
+    owner: 'lianghanqiang003',
     repo: 'escrcpy',
     updaterCacheDirName: 'escrcpy-updater',
   },

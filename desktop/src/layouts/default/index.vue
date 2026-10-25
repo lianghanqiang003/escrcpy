@@ -49,6 +49,10 @@ const route = useRoute()
 
 const tabsModel = [
   {
+    label: 'workbench.name',
+    value: '/workbench',
+  },
+  {
     label: 'menus.device.name',
     value: '/device',
   },

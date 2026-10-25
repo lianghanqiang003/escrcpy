@@ -24,6 +24,7 @@ import {
 
 import { browserWindowHeight, browserWindowWidth, getLogoPath } from './configs/index.js'
 import { getAppBackgroundColor } from './helpers/index.js'
+import workbenchModule from './modules/workbench/index.js'
 
 import {
   contextMenuService,
@@ -79,6 +80,7 @@ mainApp.use(shortcutsService)
 mainApp.use(controlModule)
 mainApp.use(explorerModule)
 mainApp.use(terminalModule)
+mainApp.use(workbenchModule)
 
 app.whenReady().then(() => {
   mainApp.start()
