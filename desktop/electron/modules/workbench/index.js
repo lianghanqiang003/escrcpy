@@ -177,7 +177,7 @@ export default {
           `max_size=${maxSize}`, `max_fps=${fps}`, 'video_bit_rate=2500000', 'video_codec=h264',
           'tunnel_forward=true', 'send_device_meta=true', 'send_stream_meta=true',
           'send_frame_meta=true', 'send_dummy_byte=true', 'video_codec_options=i-frame-interval=1',
-          'cleanup=true', 'clipboard_autosync=false', 'power_on=true',
+          'cleanup=true', 'clipboard_autosync=false', 'power_on=true', 'stay_awake=true',
         ]
         if (session.closed)
           return { sessionId: id }
