@@ -55,14 +55,32 @@
           </button>
         </div>
       </header>
+      <div class="layout-toolbar">
+        <label class="size-control">
+          <i class="i-lucide-panels-top-left" /><span>{{ $t('workbench.screenSize') }}</span>
+          <input v-model.number="tileWidth" type="range" min="140" max="320" step="10" :aria-label="$t('workbench.screenSize')" @input="layoutColumns = 0">
+          <output>{{ tileWidth }} px</output>
+        </label>
+        <label class="columns-control">
+          <span>{{ $t('workbench.columns') }}</span>
+          <select v-model.number="layoutColumns" :aria-label="$t('workbench.columns')">
+            <option :value="0">{{ $t('workbench.autoLayout') }}</option>
+            <option v-for="number in [2, 3, 4, 6, 8, 10]" :key="number" :value="number">{{ $t('workbench.columnCount', { number }) }}</option>
+          </select>
+        </label>
+        <span class="layout-tip">{{ $t('workbench.arrangeHint') }}</span>
+        <button class="layout-reset" @click="resetLayout">
+          {{ $t('workbench.resetLayout') }}
+        </button>
+      </div>
       <div class="workspace-strip">
         <span><i class="status-dot live" />{{ $t('workbench.autoDiscover') }}</span><span>{{ $t('workbench.streamQuality', { fps: maxFps }) }}</span><span class="mode-indicator" :class="{ sync: broadcast && interactive }">{{ $t(interactive ? broadcast ? 'workbench.syncActive' : 'workbench.singleControl' : 'workbench.viewOnly') }}</span>
       </div>
-      <div v-if="devices.length" class="screen-grid" :class="{ focused: !!focusedId }" :style="{ '--columns': columns }">
-        <article v-for="(device, index) in devices" v-show="!focusedId || focusedId === device.id" :key="identity(device)" class="phone-card" :class="{ selected: selectedId === device.id }">
+      <div v-if="devices.length" ref="gridElement" class="screen-grid" :class="{ focused: !!focusedId }" :style="screenLayout.grid">
+        <article v-for="(device, index) in devices" :key="identity(device)" class="phone-card" :class="{ 'selected': selectedId === device.id, 'drop-target': draggedId && draggedId !== identity(device), 'enlarged': focusedId === device.id }" :style="{ ...screenLayout.cards[index], '--screen-ratio': screenRatio(device.id) }" @dragover.prevent @drop.prevent="dropDevice(device)">
           <header class="phone-header" @click="selectedId = device.id">
-            <span class="phone-icon"><i class="i-lucide-smartphone" /></span><div><strong>{{ label(device) }}</strong><small>{{ $t('workbench.deviceNumber', { number: String(index + 1).padStart(2, '0') }) }}</small></div><span class="phone-live"><i class="status-dot" :class="{ live: metrics[device.id]?.status === 'live' }" />{{ $t(metrics[device.id]?.status === 'live' ? 'workbench.live' : 'workbench.connecting') }}</span><button :title="$t('workbench.focus')" @click.stop="focusedId = focusedId ? '' : device.id">
-              <i :class="focusedId ? 'i-lucide-minimize-2' : 'i-lucide-expand'" />
+            <span class="arrange-handle" draggable="true" :title="$t('workbench.arrangeHint')" @dragstart="startArrange($event, device)" @dragend="draggedId = ''"><i class="i-lucide-grip-vertical" /></span><div><strong :title="label(device)">{{ label(device) }}</strong><small><i class="status-dot" :class="{ live: metrics[device.id]?.status === 'live' }" />{{ $t('workbench.deviceNumber', { number: String(index + 1).padStart(2, '0') }) }}</small></div><button :title="$t('workbench.focus')" @click.stop="focusDevice(device.id)">
+              <i :class="focusedId === device.id ? 'i-lucide-minimize-2' : 'i-lucide-expand'" />
             </button>
           </header>
           <div class="phone-screen">
@@ -80,7 +98,7 @@
             </button>
           </div>
           <footer class="phone-footer">
-            <span>{{ device.id }}</span><span>{{ metrics[device.id]?.width || '—' }} × {{ metrics[device.id]?.height || '—' }}</span><b>{{ metrics[device.id]?.fps || 0 }} fps</b>
+            <span :title="device.id">{{ device.id }}</span><span>{{ metrics[device.id]?.width || '—' }} × {{ metrics[device.id]?.height || '—' }}</span><b>{{ metrics[device.id]?.fps || 0 }} fps</b>
           </footer>
         </article>
       </div>
@@ -98,28 +116,78 @@
 
 <script setup>
 import DeviceScreen from './components/device-screen/index.vue'
-import { selectOnlineDevices } from './helpers.js'
+import { getScreenLayout, orderDevices, selectOnlineDevices } from './helpers.js'
 
 const router = useRouter()
 const store = useDeviceStore()
 const ipc = window.$preload.ipcRenderer
-const devices = computed(() => selectOnlineDevices(store.list))
+const savedOrder = useLocalStorage('escrcpy-workbench-device-order', [])
+const devices = computed(() => orderDevices(selectOnlineDevices(store.list), savedOrder.value))
 const metrics = reactive({})
 const selectedId = ref('')
 const focusedId = ref('')
+const draggedId = ref('')
+const gridElement = ref(null)
+const gridSize = useElementSize(gridElement)
+const tileWidth = useLocalStorage('escrcpy-workbench-tile-width', 180)
+const layoutColumns = useLocalStorage('escrcpy-workbench-columns', 0)
 const maxSize = ref(720)
 const interactive = ref(false)
 const broadcast = ref(false)
 const refreshing = ref(false)
 const maxFps = computed(() => maxSize.value === 1080 ? 30 : 24)
 const liveCount = computed(() => devices.value.filter(device => metrics[device.id]?.status === 'live').length)
-const columns = computed(() => devices.value.length <= 2 ? devices.value.length : devices.value.length <= 6 ? 3 : 4)
+const screenLayout = computed(() => getScreenLayout({
+  count: devices.value.length,
+  width: Math.max(1, gridSize.width.value - 14),
+  height: gridSize.height.value,
+  tileWidth: tileWidth.value,
+  columns: layoutColumns.value,
+  focusedIndex: devices.value.findIndex(device => device.id === focusedId.value),
+  focusedRatio: screenRatio(focusedId.value),
+}))
 const gestures = new Map()
 let interval
 let active = false
 
 const identity = device => device.serialNo || device.id
 const label = device => device.remark || device.name || device.model || window.t('common.unknownDevice')
+
+function screenRatio(id) {
+  const { width, height } = metrics[id] || {}
+  return width && height ? width / height : 0.45
+}
+
+function resetLayout() {
+  tileWidth.value = 180
+  layoutColumns.value = 0
+  savedOrder.value = []
+  focusedId.value = ''
+}
+
+function focusDevice(id) {
+  selectedId.value = id
+  focusedId.value = focusedId.value === id ? '' : id
+  gridElement.value?.scrollTo({ top: 0, left: 0 })
+}
+
+function startArrange(event, device) {
+  draggedId.value = identity(device)
+  event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData('text/plain', draggedId.value)
+}
+
+function dropDevice(device) {
+  const order = devices.value.map(identity)
+  const source = order.indexOf(draggedId.value)
+  const target = order.indexOf(identity(device))
+  if (source >= 0 && target >= 0 && source !== target) {
+    order.splice(source, 1)
+    order.splice(target, 0, draggedId.value)
+    savedOrder.value = [...order, ...savedOrder.value.filter(id => !order.includes(id))]
+  }
+  draggedId.value = ''
+}
 
 function selectDevice(id) {
   if (broadcast.value && interactive.value && gestures.size)
@@ -247,7 +315,7 @@ onBeforeUnmount(end)
 .fleet-sidebar {
   display: flex;
   flex-direction: column;
-  width: 218px;
+  width: 198px;
   flex-shrink: 0;
   padding: 24px 14px 16px;
   background: #111a25;
@@ -438,7 +506,7 @@ onBeforeUnmount(end)
   flex-direction: column;
   flex: 1;
   min-width: 0;
-  padding: 26px 30px 0;
+  padding: 20px 22px 0;
   overflow: hidden;
 }
 .workspace-header {
@@ -474,7 +542,7 @@ onBeforeUnmount(end)
   border-radius: 50%;
 }
 .workspace-header h1 {
-  font-size: 24px;
+  font-size: 21px;
   font-weight: 550;
   letter-spacing: 1px;
   margin: 9px 0 5px;
@@ -489,7 +557,8 @@ onBeforeUnmount(end)
   align-items: center;
   gap: 7px;
 }
-.workspace-actions select {
+.workspace-actions select,
+.layout-toolbar select {
   background: #172331;
   color: #c0cede;
   border: 1px solid #ffffff12;
@@ -497,6 +566,53 @@ onBeforeUnmount(end)
   border-radius: 6px;
   font-size: 10px;
   outline: none;
+}
+.layout-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  margin-top: 18px;
+  padding: 10px 12px;
+  border: 1px solid #ffffff0b;
+  border-radius: 7px;
+  background: #131e2b;
+  color: #92a8bd;
+  font-size: 10px;
+}
+.size-control,
+.columns-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.size-control i {
+  width: 13px;
+  height: 13px;
+  color: #63c8a7;
+}
+.size-control input {
+  width: 100px;
+  accent-color: #60d7ae;
+  cursor: ew-resize;
+}
+.size-control output {
+  min-width: 38px;
+  color: #c1d1df;
+  font-variant-numeric: tabular-nums;
+}
+.layout-toolbar select {
+  padding: 5px 8px;
+}
+.layout-tip {
+  color: #5e7890;
+}
+.layout-reset {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: #88baa9 !important;
+  padding: 3px;
 }
 .workspace-actions button,
 .phone-header button {
@@ -522,7 +638,7 @@ onBeforeUnmount(end)
   display: flex;
   align-items: center;
   gap: 20px;
-  padding: 22px 0 16px;
+  padding: 12px 0;
   color: #60788e;
   font-size: 9px;
 }
@@ -540,26 +656,21 @@ onBeforeUnmount(end)
 }
 .screen-grid {
   display: grid;
-  grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
   flex: 1;
   min-height: 0;
-  gap: 16px;
+  gap: 12px;
   overflow: auto;
   padding: 1px 1px 6px;
   align-content: start;
-}
-.screen-grid.focused {
-  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  scrollbar-gutter: stable;
 }
 .phone-card {
   min-width: 0;
   border: 1px solid #263547;
-  border-radius: 10px;
+  border-radius: 7px;
   overflow: hidden;
   background: #111c29;
-  height: calc(100vh - 268px);
-  min-height: 280px;
-  max-height: 850px;
   display: flex;
   flex-direction: column;
   transition: border-color 0.15s;
@@ -568,26 +679,31 @@ onBeforeUnmount(end)
   border-color: #4ea68987;
   box-shadow: 0 0 0 1px #49ca9712;
 }
+.phone-card.drop-target {
+  border-style: dashed;
+}
 .phone-header {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 8px;
-  padding: 12px 14px;
+  gap: 5px;
+  padding: 7px 6px;
   border-bottom: 1px solid #ffffff08;
   cursor: pointer;
 }
-.phone-icon {
+.arrange-handle {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 30px;
-  border: 1px solid #ffffff0c;
-  border-radius: 6px;
-  color: #7b92a8;
+  width: 15px;
+  height: 27px;
+  color: #536e84;
+  cursor: grab;
 }
-.phone-icon i {
-  width: 14px;
+.arrange-handle:hover {
+  color: #71dfb8;
+}
+.arrange-handle i {
+  width: 12px;
   height: 14px;
 }
 .phone-header div {
@@ -596,25 +712,19 @@ onBeforeUnmount(end)
 }
 .phone-header strong {
   display: block;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .phone-header small {
-  display: block;
-  font-size: 8px;
-  color: #647b91;
-  margin-top: 4px;
-}
-.phone-live {
   display: flex;
   align-items: center;
   gap: 4px;
   font-size: 8px;
-  color: #68c9a8;
-  white-space: nowrap;
+  color: #647b91;
+  margin-top: 3px;
 }
 .phone-header button {
   width: 22px;
@@ -627,22 +737,23 @@ onBeforeUnmount(end)
   height: 12px;
 }
 .phone-screen {
-  flex: 1;
+  width: 100%;
+  aspect-ratio: var(--screen-ratio, 0.45);
   min-height: 0;
 }
 .phone-navigation {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 7px 14px;
+  padding: 4px 6px;
   background: #111c29;
   border-top: 1px solid #ffffff08;
 }
 .phone-navigation button {
   display: grid;
   place-items: center;
-  height: 24px;
-  width: 32px;
+  height: 23px;
+  width: 27px;
   border: 0;
   background: transparent;
   color: #7a91a9;
@@ -661,9 +772,10 @@ onBeforeUnmount(end)
 }
 .phone-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  padding: 9px 14px;
+  gap: 4px 8px;
+  padding: 6px 8px;
   border-top: 1px solid #ffffff08;
   font:
     8px ui-monospace,
@@ -671,10 +783,13 @@ onBeforeUnmount(end)
   color: #5e7891;
 }
 .phone-footer span:first-child {
-  flex: 1;
+  width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.phone-footer span:nth-child(2) {
+  flex: 1;
 }
 .phone-footer b {
   color: #77bba2;
@@ -733,11 +848,8 @@ onBeforeUnmount(end)
   color: #72889f;
 }
 @media (min-width: 1700px) {
-  .screen-grid {
-    gap: 24px;
-  }
   .fleet-main {
-    padding: 32px 42px 0;
+    padding: 24px 26px 0;
   }
 }
 @media (max-width: 1000px) {
@@ -748,11 +860,8 @@ onBeforeUnmount(end)
   .fleet-main {
     padding: 22px 18px 0;
   }
-  .phone-live {
+  .layout-tip {
     display: none;
-  }
-  .screen-grid {
-    gap: 10px;
   }
   .phone-footer {
     gap: 6px;
@@ -768,6 +877,9 @@ onBeforeUnmount(end)
   }
   .workspace-header h1 {
     font-size: 19px;
+  }
+  .workspace-header {
+    flex-wrap: wrap;
   }
   .workspace-strip {
     gap: 10px;

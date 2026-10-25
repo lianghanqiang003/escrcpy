@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 // eslint-disable-next-line test/no-import-node-test
 import test from 'node:test'
-import { getVideoPoint, selectOnlineDevices } from './helpers.js'
+import { getScreenLayout, getVideoPoint, orderDevices, selectOnlineDevices } from './helpers.js'
 
 test('USB, IP and mDNS aliases represent one phone; missing serials remain separate', () => {
   const devices = selectOnlineDevices([
@@ -22,4 +22,29 @@ test('pointer coordinates account for letterboxing and clamp a drag outside the 
   assert.deepEqual(getVideoPoint({ clientX: -100, clientY: 900 }, element, 100, 200), { x: 0, y: 1 })
   assert.equal(getVideoPoint({}, element, 0, 0), null)
   assert.equal(getVideoPoint({ clientX: 110, clientY: 250 }, element, 100, 200, false), null)
+})
+
+test('thumbnail size stays compact even with only two phones on a large desktop', () => {
+  const layout = getScreenLayout({ count: 2, width: 1800, height: 900 })
+  assert.match(layout.grid.gridTemplateColumns, /180px/)
+  assert.deepEqual(layout.cards, [])
+  const narrow = getScreenLayout({ count: 12, width: 270, height: 500, columns: 8 })
+  assert.match(narrow.grid.gridTemplateColumns, /^repeat\(1, 270px\)$/)
+})
+
+test('enlarging any phone assigns every preview a distinct cell and keeps them visible', () => {
+  for (const width of [260, 600, 1200]) {
+    const layout = getScreenLayout({ count: 11, width, height: 620, focusedIndex: 4 })
+    assert.equal(layout.cards.length, 11)
+    const previews = layout.cards.filter((_, index) => index !== 4)
+    assert.equal(new Set(previews.map(card => `${card.gridColumn}:${card.gridRow}`)).size, 10)
+    assert.ok(Number.parseFloat(layout.cards[4].width) <= width)
+    assert.ok(previews.every(card => Number(card.gridColumn) >= (width >= 600 ? 2 : 1)))
+  }
+})
+
+test('saved arrangement follows hardware identity when a wireless endpoint changes', () => {
+  const devices = [{ id: 'usb', serialNo: 'one' }, { id: 'new-ip:1234', serialNo: 'two' }, { id: 'new-phone' }]
+  assert.deepEqual(orderDevices(devices, ['two', 'one']).map(item => item.id), ['new-ip:1234', 'usb', 'new-phone'])
+  assert.deepEqual(devices.map(item => item.id), ['usb', 'new-ip:1234', 'new-phone'])
 })

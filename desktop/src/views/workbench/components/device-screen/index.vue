@@ -312,7 +312,7 @@ defineExpose({ restart })
 .device-surface {
   position: relative;
   height: 100%;
-  min-height: 180px;
+  min-height: 0;
   background: #080d13;
   overflow: hidden;
   touch-action: none;
