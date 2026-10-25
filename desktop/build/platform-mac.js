@@ -18,6 +18,8 @@ export const mac = {
   entitlements: 'electron/resources/build/entitlements.mac.plist',
   entitlementsInherit: 'electron/resources/build/entitlements.mac.plist',
   extendInfo: {
+    NSLocalNetworkUsageDescription:
+      'Connect to your Android devices over the local network for live screen mirroring and control.',
     NSDocumentsFolderUsageDescription:
       'Application requests access to the user\'s Documents folder.',
     NSDownloadsFolderUsageDescription:

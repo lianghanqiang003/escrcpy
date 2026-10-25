@@ -30,9 +30,10 @@ export default {
         session.owner.send('workbench:event', { deviceId: session.deviceId, sessionId: session.id, requestId: session.requestId, ...data })
     }
 
-    function stop(session) {
+    function stop(session, reason = 'Screen session stopped') {
       if (!session || session.closed)
         return
+      send(session, { type: 'stopped', message: reason })
       session.closed = true
       if (sessions.get(session.key) === session)
         sessions.delete(session.key)
@@ -61,8 +62,8 @@ export default {
         stopOwner(owner.id)
         owners.delete(owner.id)
       })
-      owner.on('did-start-navigation', (_, __, ___, isMainFrame) => {
-        if (isMainFrame)
+      owner.on('did-start-navigation', (_, __, isInPlace, isMainFrame) => {
+        if (isMainFrame && !isInPlace)
           stopOwner(owner.id)
       })
     }
@@ -176,7 +177,7 @@ export default {
           `max_size=${maxSize}`, `max_fps=${fps}`, 'video_bit_rate=2500000', 'video_codec=h264',
           'tunnel_forward=true', 'send_device_meta=true', 'send_stream_meta=true',
           'send_frame_meta=true', 'send_dummy_byte=true', 'video_codec_options=i-frame-interval=1',
-          'cleanup=true', 'clipboard_autosync=false', 'power_on=false',
+          'cleanup=true', 'clipboard_autosync=false', 'power_on=true',
         ]
         if (session.closed)
           return { sessionId: id }
@@ -234,7 +235,7 @@ export default {
     ipcMain.handle('workbench:start', (event, options) => start(event.sender, options))
     ipcMain.handle('workbench:stop', (event, deviceId, sessionId) => {
       const session = sessions.get(`${event.sender.id}:${deviceId}`)
-      if (!sessionId || session?.id === sessionId)
+      if (sessionId && session?.id === sessionId)
         stop(session)
     })
     ipcMain.on('workbench:ack', (event, deviceId, sessionId, sequence) => {

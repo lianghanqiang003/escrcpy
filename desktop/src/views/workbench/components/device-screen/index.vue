@@ -155,7 +155,7 @@ function onEvent(_, packet) {
       decoder.decode(new EncodedVideoChunk({ type: packet.key ? 'key' : 'delta', timestamp: packet.timestamp, data: bytes }))
       needsKey = false
     }
-    else if (packet.type === 'error') {
+    else if (packet.type === 'error' || packet.type === 'stopped') {
       releaseTouch()
       setStatus('error', packet.message)
       scheduleRetry()
