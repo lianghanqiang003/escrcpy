@@ -20,7 +20,7 @@
         <button class="control-mode" :class="{ enabled: interactive }" @click="interactive = !interactive">
           <span>{{ $t(interactive ? 'workbench.controlOn' : 'workbench.viewOnly') }}</span><span class="toggle"><i /></span>
         </button>
-        <button class="control-mode" :class="{ enabled: broadcast }" :disabled="!interactive || devices.length < 2" @click="broadcast = !broadcast">
+        <button class="control-mode" :class="{ enabled: broadcast }" :disabled="!interactive || devices.length < 2 || automationLocks.active" @click="broadcast = !broadcast">
           <span>{{ $t('workbench.sync') }}</span><span class="toggle"><i /></span>
         </button>
         <p>{{ $t(broadcast && interactive ? 'workbench.syncHint' : 'workbench.controlHint') }}</p>
@@ -38,6 +38,9 @@
           </div><h1>{{ $t('workbench.overview') }}</h1><p>{{ $t('workbench.summary', { devices: devices.length, streams: liveCount }) }}</p>
         </div>
         <div class="workspace-actions">
+          <button class="script-toggle" :class="{ active: scriptsOpen }" @click="scriptsOpen = !scriptsOpen">
+            <i class="i-lucide-workflow" /><span>{{ $t('automation.title') }}</span><b v-if="automationLocks.active" />
+          </button>
           <select v-model.number="maxSize" :aria-label="$t('workbench.quality')">
             <option :value="540">
               {{ $t('workbench.qualityCompact') }}
@@ -84,14 +87,14 @@
             </button>
           </header>
           <div class="phone-screen">
-            <DeviceScreen :device-id="device.id" :max-size="maxSize" :fps="maxFps" :interactive="interactive && (!broadcast || selectedId === device.id)" @select="selectDevice(device.id)" @status="updateMetrics(device.id, $event)" @input="control(device.id, $event)" />
+            <DeviceScreen :device-id="device.id" :max-size="maxSize" :fps="maxFps" :interactive="interactive && !automationLocks.deviceIds.includes(device.id) && (!broadcast || selectedId === device.id)" @select="selectDevice(device.id)" @status="updateMetrics(device.id, $event)" @input="control(device.id, $event)" />
           </div>
           <div class="phone-navigation">
-            <button :disabled="!interactive" :title="$t('workbench.back')" @click="key(device.id, 4)">
+            <button :disabled="!interactive || automationLocks.deviceIds.includes(device.id)" :title="$t('workbench.back')" @click="key(device.id, 4)">
               <i class="i-lucide-chevron-left" />
-            </button><button :disabled="!interactive" :title="$t('workbench.home')" @click="key(device.id, 3)">
+            </button><button :disabled="!interactive || automationLocks.deviceIds.includes(device.id)" :title="$t('workbench.home')" @click="key(device.id, 3)">
               <i class="i-lucide-circle" />
-            </button><button :disabled="!interactive" :title="$t('workbench.recents')" @click="key(device.id, 187)">
+            </button><button :disabled="!interactive || automationLocks.deviceIds.includes(device.id)" :title="$t('workbench.recents')" @click="key(device.id, 187)">
               <i class="i-lucide-square" />
             </button><span /><button :title="$t('workbench.wake')" @click="key(device.id, 224, true)">
               <i class="i-lucide-sun" />
@@ -111,11 +114,13 @@
         <span><i class="i-lucide-radio" />{{ $t('workbench.realtime') }}</span><span>{{ $t('workbench.gestureHint') }}</span><a href="https://github.com/lianghanqiang003/escrcpy" target="_blank">WORKBENCH BUILD ↗</a>
       </footer>
     </main>
+    <ScriptPanel :devices="devices" :open="scriptsOpen" @close="scriptsOpen = false" @focus="focusDevice" @starting="prepareAutomation" @locks="automationLocks = $event" />
   </section>
 </template>
 
 <script setup>
 import DeviceScreen from './components/device-screen/index.vue'
+import ScriptPanel from './components/script-panel/index.vue'
 import { getScreenLayout, orderDevices, selectOnlineDevices } from './helpers.js'
 
 const router = useRouter()
@@ -134,6 +139,8 @@ const layoutColumns = useLocalStorage('escrcpy-workbench-columns', 0)
 const maxSize = ref(720)
 const interactive = ref(false)
 const broadcast = ref(false)
+const scriptsOpen = ref(false)
+const automationLocks = ref({ active: false, deviceIds: [] })
 const refreshing = ref(false)
 const maxFps = computed(() => maxSize.value === 1080 ? 30 : 24)
 const liveCount = computed(() => devices.value.filter(device => metrics[device.id]?.status === 'live').length)
@@ -195,6 +202,11 @@ function selectDevice(id) {
   selectedId.value = id
 }
 
+function prepareAutomation() {
+  interactive.value = false
+  broadcast.value = false
+}
+
 function updateMetrics(id, data) {
   metrics[id] = { ...metrics[id], ...data }
 }
@@ -227,7 +239,7 @@ function control(id, input) {
   let deviceIds = gestures.get(id)
   // An in-progress gesture keeps its original targets even if sync is toggled.
   if (input.action === 0) {
-    if (!interactive.value || (broadcast.value && selectedId.value !== id))
+    if (!interactive.value || automationLocks.value.deviceIds.includes(id) || (broadcast.value && selectedId.value !== id))
       return
     deviceIds = targets(id)
     gestures.set(id, deviceIds)
@@ -240,6 +252,8 @@ function control(id, input) {
 }
 
 function key(id, keyCode, force = false) {
+  if (automationLocks.value.deviceIds.includes(id))
+    return
   if (!force && !interactive.value)
     return
   ipc.invoke('workbench:input', { type: 'key', keyCode, deviceIds: force ? [id] : targets(id) }).catch(reportError)
@@ -271,6 +285,10 @@ watch(interactive, (value) => {
   if (!value)
     broadcast.value = false
 })
+watch(() => automationLocks.value.active, (value) => {
+  if (value)
+    broadcast.value = false
+})
 watch(devices, (list) => {
   if (!list.some(device => device.id === selectedId.value))
     selectedId.value = list[0]?.id || ''
@@ -285,6 +303,7 @@ onBeforeUnmount(end)
 
 <style scoped>
 .workbench {
+  position: relative;
   display: flex;
   height: 100%;
   min-height: 430px;
@@ -633,6 +652,25 @@ onBeforeUnmount(end)
 .workspace-actions i {
   width: 13px;
   height: 13px;
+}
+.workspace-actions .script-toggle {
+  display: flex;
+  gap: 6px;
+  width: auto;
+  padding: 0 10px;
+  color: #80c9b1;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.script-toggle.active {
+  border-color: #4ba789;
+  background: #1b3832;
+}
+.script-toggle b {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #75e0b4;
 }
 .workspace-strip {
   display: flex;

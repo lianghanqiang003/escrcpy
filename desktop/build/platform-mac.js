@@ -12,7 +12,7 @@ export const mac = {
   extraResources: {
     from: 'electron/resources/extra',
     to: 'extra',
-    filter: ['common', 'mac', 'mac-${arch}'],
+    filter: ['common', 'mac', 'mac-${arch}', '!**/__pycache__/**', '!**/*.pyc'],
   },
   x64ArchFiles: 'Contents/Resources/extra/**/*',
   entitlements: 'electron/resources/build/entitlements.mac.plist',

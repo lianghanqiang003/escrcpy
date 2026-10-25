@@ -28,3 +28,9 @@ yarn.lock
 
 # Dist
 dist*
+
+# Local automation artifacts
+__pycache__/
+*.pyc
+**/automation/ocr-preprocess
+**/automation/jd-cart/runs/

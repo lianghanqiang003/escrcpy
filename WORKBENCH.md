@@ -16,13 +16,25 @@
 
 切换到其他页签会停止工作台视频会话，回来后自动重连。退出应用只清理本工作台创建的会话和 ADB 转发，不重启 ADB 服务。手机本身的锁屏、应用安全验证和受保护画面仍由手机系统管理。
 
+## 脚本任务
+
+点击工作台右上角「脚本任务」，选择内置脚本并勾选手机。当前提供「京东 · 领券与加购物车」「京东 · 仅领取优惠券」「京东 · 环境检查」。领券与加购脚本复用之前的本地 ADB/UIAutomator/OCR 实现；输入多条优惠券、商品或佣金链接后，先点击「识别链接」检查类型，再执行。已识别的优惠券优先，商品每条默认加 1 件；短链保持完整推广参数，佣金归因以京东联盟为准。
+
+每台手机独立执行，最多同时运行四台，其余排队。运行中可收起面板继续看屏幕，关闭面板不停止脚本。脚本运行的手机暂时锁定工作台触控，同步群控会关闭；需要人工处理时暂停并解锁该手机的独立操作，处理后可点击「继续检查」「跳过本条」或「我已手动处理」。规格不明确时需用户确认，结果不明确不会自动重复加购。脚本不提交订单或付款。
+
+单台停止与全部停止均可用；已经发出的点击可能已经生效，需要核对手机。应用退出时停止脚本，重新打开后保留上一批结果，并把中断项标为待核对，不自动重跑。点击「本地报告」打开本机报告文件夹，包含批次汇总、每台手机的 JSON/CSV 报告与核对截图。它们位于应用用户数据目录的 `workbench-automation/`，不会写入应用资源或上传到 GitHub。
+
+当前脚本运行器支持 macOS，需要 Python 3.10+ 和 ADB；本地 Tesseract 为中文 OCR 提供识别，没有 OCR 时使用安卓界面文字，识别不出则暂停。OCR 模型与 Apache-2.0 许可一并提供。内置脚本通过本机标准输入/输出通信，不额外启动网页服务。
+
 ## 开发与构建
 
 ```sh
 corepack enable pnpm
 pnpm install --frozen-lockfile
 pnpm test:workbench
+pnpm test:automation
 pnpm lint
+pnpm build:workbench-ocr
 pnpm --filter escrcpy... build
 pnpm --filter escrcpy exec electron-builder --config=./electron-builder.config.js --mac --arm64 --dir --publish=never
 ```
