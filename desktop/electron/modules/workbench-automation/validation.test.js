@@ -24,3 +24,14 @@ test('an interrupted action is uncertain and cannot be restored as successful', 
   assert.equal(result.paused, false)
   assert.deepEqual(result.items.map(item => item.status), ['added', 'uncertain', 'stopped'])
 })
+
+test('VIP tasks require an explicit campaign, release time, and bounded phone count', () => {
+  const vip = { keyword: '四川消费券', activityText: '消费券', claimAt: Date.now() + 60000, prepareOnly: true }
+  const request = { scriptId: 'vip-coupon', deviceIds: ['phone'], vip }
+  assert.equal(validateRequest(request).vip.keyword, '四川消费券')
+  assert.equal(validateRequest(request).vip.prepareOnly, true)
+  assert.deepEqual(validateRequest(request).items, [])
+  assert.throws(() => validateRequest({ ...request, vip: { ...vip, keyword: '' } }))
+  assert.throws(() => validateRequest({ ...request, vip: { ...vip, claimAt: Date.now() + 4 * 86400000 } }))
+  assert.throws(() => validateRequest({ ...request, deviceIds: Array.from({ length: 9 }, (_, index) => `phone-${index}`) }))
+})

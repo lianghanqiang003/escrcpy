@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { promisify } from 'node:util'
-import { app, ipcMain, shell } from 'electron'
+import { app, ipcMain, powerSaveBlocker, shell } from 'electron'
 import { getAdb } from '$electron/configs/which/index.js'
 import { extraResolve, whichResolve } from '$electron/process/resources.js'
 import { ACTIVE_PHASES, finalizeInterruptedState, SCRIPT_IDS, validateRequest } from './validation.js'
@@ -23,6 +23,7 @@ export default {
     let starting = false
     let closing = false
     let persistTimer
+    let powerBlocker
     const active = () => !!task?.jobs.some(job => ACTIVE_PHASES.includes(job.phase))
     const snapshot = () => task ? { ...task, active: active() } : null
     fs.mkdirSync(root, { recursive: true, mode: 0o700 })
@@ -49,6 +50,12 @@ export default {
     }
 
     function publish() {
+      if (!closing && task?.scriptId === 'vip-coupon' && active() && powerBlocker === undefined)
+        powerBlocker = powerSaveBlocker.start('prevent-app-suspension')
+      if (!active() && powerBlocker !== undefined) {
+        powerSaveBlocker.stop(powerBlocker)
+        powerBlocker = undefined
+      }
       if (owner && !owner.isDestroyed())
         owner.send('workbench-automation:event', snapshot())
       clearTimeout(persistTimer)
@@ -87,6 +94,7 @@ export default {
           JD_TESSERACT: env.tesseract || '',
           JD_OCR_HELPER: extraResolve(`mac-${process.arch}/automation/ocr-preprocess`),
           JD_COUPON_ONLY: request.scriptId === 'jd-coupon' ? '1' : '0',
+          WORKBENCH_YADB: extraResolve('common/yadb/yadb'),
         },
       })
       child.stdin.on('error', () => {})
@@ -142,14 +150,14 @@ export default {
       if (closing || !task)
         return
       for (const job of task.jobs) {
-        if (children.size >= 4)
+        if (children.size >= (task.scriptId === 'vip-coupon' ? 8 : 4))
           break
         if (job.phase !== 'queued')
           continue
         job.phase = 'running'
         const folder = path.join(task.folder, job.id)
         fs.mkdirSync(folder, { mode: 0o700 })
-        const child = launch(env, { mode: 'run', scriptId: task.scriptId, deviceId: job.deviceId, items: task.items, commissionEntry: task.commissionEntry }, folder)
+        const child = launch(env, { mode: 'run', scriptId: task.scriptId, deviceId: job.deviceId, items: task.items, commissionEntry: task.commissionEntry, vip: task.vip }, folder)
         children.set(job.id, { child })
         let error = ''
         child.stderr.on('data', data => error = (error + data).slice(-2000))
@@ -164,7 +172,7 @@ export default {
             if (event.type === 'state') {
               job.state = event.state
               if (job.phase !== 'stopping')
-                job.phase = event.state.running ? event.state.paused ? 'paused' : 'running' : event.state.outcome || 'completed'
+                job.phase = event.state.running ? event.state.paused ? 'paused' : event.state.waiting ? 'waiting' : 'running' : event.state.outcome || 'completed'
             }
             else if (event.type === 'fatal') {
               error = event.message
@@ -228,6 +236,8 @@ export default {
           const env = await environment()
           if (!env.ready)
             throw new Error('需要 macOS、Python 3.10+ 和 ADB')
+          if (request.scriptId === 'vip-coupon' && !env.ocrReady)
+            throw new Error('唯品会活动页需要本地中文 OCR，请先安装 Tesseract')
           const online = (await run(getAdb(), ['devices'], { timeout: 10000 })).stdout.split('\n').filter(row => /\tdevice\s*$/.test(row)).map(row => row.split('\t')[0])
           const identities = new Set()
           for (const id of request.deviceIds) {
@@ -241,7 +251,7 @@ export default {
           const id = randomUUID()
           const folder = path.join(root, id)
           fs.mkdirSync(folder, { mode: 0o700 })
-          task = { id, folder, scriptId: request.scriptId, items: request.items, commissionEntry: request.commissionEntry, createdAt: new Date().toISOString(), jobs: request.deviceIds.map(deviceId => ({ id: randomUUID(), deviceId, phase: 'queued', state: { items: request.items.map(item => ({ ...item, status: 'pending' })), message: '等待执行', logs: [] } })) }
+          task = { id, folder, scriptId: request.scriptId, items: request.items, commissionEntry: request.commissionEntry, vip: request.vip, createdAt: new Date().toISOString(), jobs: request.deviceIds.map(deviceId => ({ id: randomUUID(), deviceId, phase: 'queued', state: { items: request.items.map(item => ({ ...item, status: 'pending' })), message: '等待执行', logs: [] } })) }
           owner = event.sender
           const ownerId = owner.id
           owner.once('destroyed', () => {
@@ -280,6 +290,10 @@ export default {
       ipcMain.handle(`workbench-automation:${channel}`, handler)
     function cleanup() {
       closing = true
+      if (powerBlocker !== undefined) {
+        powerSaveBlocker.stop(powerBlocker)
+        powerBlocker = undefined
+      }
       clearTimeout(persistTimer)
       for (const { child, timer } of children.values()) {
         clearTimeout(timer)

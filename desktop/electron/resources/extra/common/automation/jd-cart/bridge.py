@@ -49,8 +49,16 @@ def main():
             "logs": [], "pause_options": [], "run_dir": ""
         }})
         return
-    controller = engine.Controller()
-    controller.start(str(request["deviceId"]), request["items"], str(request.get("commissionEntry", "")))
+    if request.get("scriptId") == "vip-coupon":
+        vip_spec = importlib.util.spec_from_file_location("vip_engine", Path(__file__).with_name("vip-engine.py"))
+        vip = importlib.util.module_from_spec(vip_spec)
+        sys.modules[vip_spec.name] = vip
+        vip_spec.loader.exec_module(vip)
+        controller = vip.VipController()
+        controller.start(str(request["deviceId"]), request["vip"])
+    else:
+        controller = engine.Controller()
+        controller.start(str(request["deviceId"]), request["items"], str(request.get("commissionEntry", "")))
     threading.Thread(target=commands, args=(controller,), daemon=True).start()
     previous = ""
     while True:

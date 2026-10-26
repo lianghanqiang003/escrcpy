@@ -114,7 +114,7 @@
         <span><i class="i-lucide-radio" />{{ $t('workbench.realtime') }}</span><span>{{ $t('workbench.gestureHint') }}</span><a href="https://github.com/lianghanqiang003/escrcpy" target="_blank">WORKBENCH BUILD ↗</a>
       </footer>
     </main>
-    <ScriptPanel :devices="devices" :open="scriptsOpen" @close="scriptsOpen = false" @focus="focusDevice" @starting="prepareAutomation" @locks="automationLocks = $event" />
+    <ScriptPanel :devices="devices" :open="scriptsOpen" @close="scriptsOpen = false" @focus="focusDevice" @assist="assistVerification" @starting="prepareAutomation" @locks="automationLocks = $event" />
   </section>
 </template>
 
@@ -205,6 +205,12 @@ function selectDevice(id) {
 function prepareAutomation() {
   interactive.value = false
   broadcast.value = false
+}
+
+function assistVerification(id) {
+  focusDevice(id)
+  broadcast.value = false
+  interactive.value = true
 }
 
 function updateMetrics(id, data) {

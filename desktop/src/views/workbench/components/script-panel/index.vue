@@ -38,7 +38,25 @@
           {{ $t('workbench.empty') }}
         </p>
       </div>
-      <template v-if="scriptId !== 'jd-check'">
+      <div v-if="scriptId === 'vip-coupon'" class="vip-options">
+        <div class="script-field">
+          <label for="vip-keyword">{{ $t('automation.vip.keyword') }}</label><input id="vip-keyword" v-model="vipKeyword" :disabled="task?.active || starting" maxlength="80">
+        </div>
+        <div class="script-field">
+          <label for="vip-activity">{{ $t('automation.vip.activity') }}</label><input id="vip-activity" v-model="vipActivity" :disabled="task?.active || starting" maxlength="100"><p>{{ $t('automation.vip.activityHint') }}</p>
+        </div>
+        <div class="script-field">
+          <label>{{ $t('automation.vip.time') }}</label><div class="vip-time">
+            <input v-model="vipDate" type="date" :aria-label="$t('automation.vip.date')" :disabled="task?.active || starting"><input v-model="vipTime" type="time" :aria-label="$t('automation.vip.time')" :disabled="task?.active || starting">
+          </div><p>{{ $t('automation.vip.timeHint') }}</p>
+        </div>
+        <label class="vip-checkbox"><input v-model="vipPrepareOnly" type="checkbox" :disabled="task?.active || starting">{{ $t('automation.vip.prepareOnly') }}</label>
+        <label class="vip-checkbox"><input v-model="vipRefresh" type="checkbox" :disabled="task?.active || starting">{{ $t('automation.vip.refresh') }}</label>
+        <p class="script-scope">
+          {{ $t('automation.vip.keepOpen') }}
+        </p>
+      </div>
+      <template v-else-if="scriptId !== 'jd-check'">
         <div class="script-field">
           <label for="workbench-links">{{ $t('automation.links') }}</label>
           <textarea id="workbench-links" v-model="draft" rows="5" :placeholder="$t('automation.linksPlaceholder')" :disabled="task?.active || starting" @input="items = []; rejected = []" />
@@ -76,7 +94,7 @@
         <i :class="starting ? 'i-lucide-loader-circle animate-spin' : 'i-lucide-play'" />{{ $t(starting ? 'automation.starting' : 'automation.start', { count: selectedDevices.length }) }}
       </button>
       <p class="script-scope">
-        {{ $t('automation.scope') }}
+        {{ $t(scriptId === 'vip-coupon' ? 'automation.vip.scope' : 'automation.scope') }}
       </p>
       <section v-if="task" class="task-results">
         <header>
@@ -92,10 +110,18 @@
           <p class="job-message">
             {{ job.state.message }}
           </p>
+          <p v-if="job.phase === 'waiting'" class="job-message">
+            {{ $t('automation.vip.countdown', { time: waitTime(job.state.wait_until) }) }}
+          </p>
+          <div v-if="job.phase === 'paused' && job.state.pause_reason === 'captcha'" class="captcha-assist">
+            <p>{{ $t('automation.vip.captchaHint') }}</p><button @click="$emit('assist', job.deviceId)">
+              {{ $t('automation.vip.assist') }}
+            </button>
+          </div>
           <div class="job-progress">
             <span>{{ $t('automation.progress', { done: completedItems(job).length, total: job.state.items.length }) }}</span><button @click="$emit('focus', job.deviceId)">
               {{ $t('automation.viewDevice') }}
-            </button><button v-if="['queued', 'running', 'paused'].includes(job.phase)" @click="respond(job, 'stop')">
+            </button><button v-if="['queued', 'running', 'waiting', 'paused'].includes(job.phase)" @click="respond(job, 'stop')">
               {{ $t('automation.stop') }}
             </button>
           </div>
@@ -105,7 +131,7 @@
             </button>
           </div>
           <div v-for="(item, index) in job.state.items" :key="item.id || index" class="result-item" :class="item.status">
-            <span :title="item.url">{{ index + 1 }}. {{ item.url || $t('automation.environmentCheck') }}</span><b>{{ $t(`automation.status.${item.status}`) }}</b><small>{{ item.message }}</small>
+            <span :title="item.url">{{ index + 1 }}. {{ item.url || item.title || $t('automation.environmentCheck') }}</span><b>{{ $t(`automation.status.${item.status}`) }}</b><small>{{ item.message }}</small>
           </div>
           <details v-if="job.state.logs?.length" class="job-logs">
             <summary>{{ $t('automation.logs') }}</summary><p v-for="(log, index) in job.state.logs.slice(-10)" :key="index">
@@ -120,9 +146,9 @@
 
 <script setup>
 const props = defineProps({ devices: { type: Array, required: true }, open: Boolean })
-const emit = defineEmits(['close', 'focus', 'starting', 'locks'])
+const emit = defineEmits(['close', 'focus', 'assist', 'starting', 'locks'])
 const ipc = window.$preload.ipcRenderer
-const scriptIds = ref(['jd-cart', 'jd-coupon', 'jd-check'])
+const scriptIds = ref(['jd-cart', 'jd-coupon', 'jd-check', 'vip-coupon'])
 const scriptId = ref('jd-cart')
 const environment = ref(null)
 const draft = ref('')
@@ -134,11 +160,19 @@ const task = ref(null)
 const parsing = ref(false)
 const starting = ref(false)
 const pendingAction = ref('')
+const vipKeyword = ref('四川消费券')
+const vipActivity = ref('消费券')
+const vipDate = ref(new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()))
+const vipTime = ref('10:00')
+const vipPrepareOnly = ref(false)
+const vipRefresh = ref(true)
+const now = useNow({ interval: 1000 })
+const vipClaimAt = computed(() => Date.parse(`${vipDate.value}T${vipTime.value}:00+08:00`))
 let initialized = false
 const identity = device => device.serialNo || device.id
 const label = device => device.remark || device.name || device.model || device.id
 const selectedDevices = computed(() => props.devices.filter(device => selected.value.includes(identity(device))))
-const canStart = computed(() => environment.value?.ready && selectedDevices.value.length && !task.value?.active && !starting.value && !parsing.value && (scriptId.value === 'jd-check' || items.value.length > 0))
+const canStart = computed(() => environment.value?.ready && selectedDevices.value.length && !task.value?.active && !starting.value && !parsing.value && (scriptId.value === 'vip-coupon' ? vipKeyword.value.trim() && vipActivity.value.trim() && Number.isFinite(vipClaimAt.value) : scriptId.value === 'jd-check' || items.value.length > 0))
 const deviceLabel = id => props.devices.find(device => device.id === id) ? label(props.devices.find(device => device.id === id)) : window.t('automation.device')
 const completedItems = job => job.state.items.filter(item => !['pending', 'opening'].includes(item.status))
 const showError = error => ElMessage.error(error.message.replace(/^Error invoking remote method '[^']+': Error: /, ''))
@@ -150,7 +184,7 @@ watch(() => props.devices, (devices) => {
   }
 }, { immediate: true })
 watch(task, (value) => {
-  emit('locks', { active: !!value?.active, deviceIds: value?.jobs.filter(job => ['queued', 'running', 'stopping'].includes(job.phase)).map(job => job.deviceId) || [] })
+  emit('locks', { active: !!value?.active, deviceIds: value?.jobs.filter(job => ['queued', 'running', 'waiting', 'stopping'].includes(job.phase)).map(job => job.deviceId) || [] })
 }, { immediate: true })
 
 async function parseLinks() {
@@ -179,7 +213,7 @@ async function startTask() {
   starting.value = true
   emit('starting')
   try {
-    task.value = await ipc.invoke('workbench-automation:start', { scriptId: scriptId.value, deviceIds: selectedDevices.value.map(device => device.id), items: items.value.map(item => ({ url: item.url, kind: item.kind })), commissionEntry: commissionEntry.value.trim() })
+    task.value = await ipc.invoke('workbench-automation:start', { scriptId: scriptId.value, deviceIds: selectedDevices.value.map(device => device.id), items: items.value.map(item => ({ url: item.url, kind: item.kind })), commissionEntry: commissionEntry.value.trim(), vip: scriptId.value === 'vip-coupon' ? { keyword: vipKeyword.value, activityText: vipActivity.value, claimAt: vipClaimAt.value, prepareOnly: vipPrepareOnly.value, refresh: vipRefresh.value } : undefined })
   }
   catch (error) {
     showError(error)
@@ -213,6 +247,10 @@ async function openReport() {
 
 function receive(_, value) {
   task.value = value
+}
+function waitTime(timestamp) {
+  const seconds = Math.max(0, Math.ceil((timestamp - now.value.getTime()) / 1000))
+  return `${Math.floor(seconds / 3600)}:${String(Math.floor(seconds / 60) % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
 }
 onMounted(async () => {
   ipc.on('workbench-automation:event', receive)
@@ -291,7 +329,8 @@ onBeforeUnmount(() => ipc.removeListener('workbench-automation:event', receive))
 }
 .script-panel select,
 .script-panel textarea,
-.commission-field input {
+.commission-field input,
+.vip-options .script-field input {
   width: 100%;
   border: 1px solid #314254;
   color: #c4d4e3;
@@ -300,6 +339,47 @@ onBeforeUnmount(() => ipc.removeListener('workbench-automation:event', receive))
   padding: 8px;
   font-size: 11px;
   outline: none;
+}
+.vip-options .script-field {
+  margin-bottom: 12px;
+}
+.vip-time {
+  display: flex;
+  gap: 8px;
+}
+.vip-time input {
+  min-width: 0;
+  color-scheme: dark;
+}
+.vip-checkbox {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  font-size: 10px;
+  color: #8ba4b9;
+  margin: 10px 0;
+}
+.vip-checkbox input {
+  accent-color: #6ed6b1;
+}
+.captcha-assist {
+  margin: 0 10px 12px;
+  padding: 9px;
+  border: 1px solid #866c42;
+  background: #49392133;
+  border-radius: 5px;
+}
+.captcha-assist p {
+  font-size: 10px;
+  line-height: 1.7;
+  color: #d6bb8e;
+  margin: 0 0 7px;
+}
+.captcha-assist button {
+  padding: 6px !important;
+  border: 1px solid #876d43 !important;
+  border-radius: 4px;
+  color: #ecc58c !important;
 }
 .script-panel textarea {
   resize: vertical;

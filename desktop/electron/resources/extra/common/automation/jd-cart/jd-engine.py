@@ -138,6 +138,8 @@ class Node:
     source: str = "xml"
     enabled: bool = True
     actionable: bool = True
+    resource_id: str = ""
+    class_name: str = ""
     @property
     def center(self):
         x1, y1, x2, y2 = self.bounds
@@ -205,7 +207,9 @@ def parse_xml(xml: str) -> Screen:
             ancestor = parent_map.get(ancestor)
         for label in dict.fromkeys([e.get("text", ""), e.get("content-desc", "")]):
             if label:
-                screen.nodes.append(Node(label, tuple(map(int, b.groups())), pkg, enabled=e.get("enabled") != "false", actionable=actionable))
+                screen.nodes.append(Node(label, tuple(map(int, b.groups())), pkg, enabled=e.get("enabled") != "false", actionable=actionable, resource_id=e.get("resource-id", ""), class_name=e.get("class", "")))
+        if not e.get("text") and not e.get("content-desc") and (e.get("class", "").endswith("EditText") or "search" in e.get("resource-id", "").lower()):
+            screen.nodes.append(Node("", tuple(map(int, b.groups())), pkg, enabled=e.get("enabled") != "false", actionable=actionable, resource_id=e.get("resource-id", ""), class_name=e.get("class", "")))
     return screen
 
 
