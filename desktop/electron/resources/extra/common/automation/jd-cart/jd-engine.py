@@ -175,6 +175,15 @@ class Screen:
             match = re.fullmatch(r'(?:已加购|购物车[,，、：:]?)(\d+)(?:件|个)?', normalize(node.text))
             if match:
                 return int(match.group(1))
+        # Some JD builds expose the badge and its label as separate native nodes.
+        labels = [n for n in self.nodes if n.source == 'xml' and normalize(n.text) == '购物车'
+                  and n.center[1] > self.height * 0.8]
+        badges = {int(n.text) for n in self.nodes if n.source == 'xml' and re.fullmatch(r'\d{1,3}', n.text)
+                  and n.bounds[3] - n.bounds[1] < self.height * 0.04
+                  and any(abs(n.center[0] - label.center[0]) < self.width * 0.07
+                          and 0 < label.center[1] - n.center[1] < self.height * 0.05 for label in labels)}
+        if len(badges) == 1:
+            return badges.pop()
         return None
 
 
@@ -293,7 +302,10 @@ class Adb:
             temp.replace(png)
             screen.screenshot = png
             decisive = screen.exact(ADD | CLAIM) or screen.contains(ADD_OK + COUPON_OK + COUPON_BAD + VERIFY)
-            if use_ocr and not decisive:
+            # A native CTA does not imply native SKU text: mixed image/native
+            # sheets still need OCR to establish which variant would be added.
+            image_sheet = Controller.quantity_editors(screen) and not Controller.sheet_skus(screen)
+            if use_ocr and (not decisive or image_sheet):
                 screen.nodes.extend(self.ocr(png))
         return screen
 
@@ -573,8 +585,8 @@ class Controller:
             buttons = page.exact(ADD)
         self.checkpoint()
         item["add_tapped"] = True
-        self.save()
         item['cart_count_before'] = page.cart_count()
+        self.save()
         self.adb.tap(buttons[0])
         if self.adb.quick_result(ADD_OK):
             self.item_update(item, "added", "识别到加入购物车成功提示")
@@ -592,7 +604,12 @@ class Controller:
             self.item_update(item, 'added', '加购后购物车件数增加，已记录前后数量')
             return
         # JD often opens an SKU sheet. Do not guess a size, color or paid bundle.
-        if self.is_spec_sheet(page):
+        if self.is_spec_sheet(page) and self.confirm_spec(item, page):
+            return
+        self.verify_after_tap(item, ADD_OK, "added", "加购")
+
+    def confirm_spec(self, item, page):
+        if not item.get('spec_submit_tapped'):
             automatic = self.spec_matches(item, page)
             if automatic:
                 self.log('规格页编号与链接 SKU 一致，数量为 1，确认加购')
@@ -601,14 +618,14 @@ class Controller:
                 action = self.pause("请在手机确认颜色、尺码和数量为 1。选好后点“继续提交加购”；若已手动加购，点“已处理”。", ("submit_spec", "confirmed", "skip"))
             if action == "confirmed":
                 self.item_update(item, "manual_confirmed", "用户确认已加购物车")
-                return
+                return True
             if action == "skip":
                 self.item_update(item, "uncertain", "已打开规格页，未确认加购；请核对购物车")
-                return
+                return True
             page = self.screen()
             if page is None:
                 self.item_update(item, "uncertain", "规格确认中断，请核对购物车")
-                return
+                return True
             buttons = page.exact(ADD)
             if not buttons:
                 buttons = page.exact({"确定"})
@@ -619,8 +636,8 @@ class Controller:
                 self.adb.tap(buttons[0])
                 if self.adb.quick_result(ADD_OK):
                     self.item_update(item, "added", "规格确认后识别到加购成功提示")
-                    return
-        self.verify_after_tap(item, ADD_OK, "added", "加购")
+                    return True
+        return False
 
     @staticmethod
     def is_spec_sheet(page):
@@ -630,17 +647,30 @@ class Controller:
         bottom = [n for n in page.exact(ADD | {"确定"}) if n.center[1] > page.height * 0.72]
         # A normal product page can also contain quantities and an Add button.
         # Demand a close control + a bottom confirmation before offering a second tap.
-        numbered_sheet = any(re.fullmatch(r'\d{8,20}', normalize(n.text)) for n in page.nodes) and page.contains(('颜色', '版本', '尺码', '规格'))
+        # The native SKU sheet often exposes only its quantity editor in XML;
+        # image-based color/size headings can be unreadable even when SKU and CTA are clear.
+        numbered_sheet = bool(Controller.sheet_skus(page)) and (
+            page.contains(('颜色', '版本', '尺码', '规格')) or Controller.quantity_editors(page))
         return bool(bottom and ((has_quantity and has_spec and close) or numbered_sheet))
+
+    @staticmethod
+    def sheet_skus(page):
+        return {match.group(1) for n in page.nodes
+                if (match := re.fullmatch(r'(?:编号[:：]?)?(\d{8,20})', normalize(n.text)))}
+
+    @staticmethod
+    def quantity_editors(page):
+        return [n for n in page.nodes if n.source == 'xml' and n.class_name.endswith('EditText')
+                and re.fullmatch(r'\d+', normalize(n.text)) and n.enabled]
 
     @staticmethod
     def spec_matches(item, page):
         sku = item.get('expected_sku')
-        if not sku or not any(normalize(n.text) == sku for n in page.nodes):
+        if not sku or Controller.sheet_skus(page) != {sku}:
             return False
         # This is the actual native quantity editor, not an OCR guess or a plus button.
-        quantity = [n for n in page.nodes if n.source == 'xml' and normalize(n.text) == '1' and n.enabled]
-        return len(quantity) == 1 and not page.contains(('请选择', '请先选择'))
+        quantity = Controller.quantity_editors(page)
+        return len(quantity) == 1 and normalize(quantity[0].text) == '1' and not page.contains(('请选择', '请先选择'))
 
     @staticmethod
     def cart_increased(item, page):
@@ -669,6 +699,11 @@ class Controller:
                 self.record_evidence(item, page)
                 self.item_update(item, "unavailable", "领取失败：已失效、领完或不满足条件")
                 return
+            if status == 'added' and not item.get('spec_submit_tapped') and self.is_spec_sheet(page):
+                if self.confirm_spec(item, page):
+                    return
+                if item.get('spec_submit_tapped'):
+                    continue
             self.record_evidence(item, page)
             action = self.pause(f"已点击{label}，但未读到明确结果。请核对手机；脚本不会自动重复点击。", ("confirmed", "continue", "skip"))
             if action == "confirmed":

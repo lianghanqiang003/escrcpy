@@ -2,6 +2,7 @@ import importlib.util
 import shlex
 import sys
 import unittest
+from tempfile import TemporaryDirectory
 from pathlib import Path
 from unittest.mock import patch
 
@@ -101,6 +102,14 @@ class UiTest(unittest.TestCase):
         self.assertFalse(Controller.cart_increased({'cart_count_before': 13}, screen('购物车15件')))
         self.assertFalse(Controller.cart_increased({}, screen('购物车14件')))
 
+    def test_separate_native_cart_badge_ignores_unrelated_numbers(self):
+        p = Screen([Node('购物车', (256, 2188, 337, 2225)),
+                    Node('2', (307, 2122, 340, 2155)),
+                    Node('409', (44, 1649, 176, 1704))], {JD_PACKAGE})
+        self.assertEqual(p.cart_count(), 2)
+        p.nodes[1].source = 'ocr'
+        self.assertIsNone(p.cart_count())
+
     def test_normal_page_is_not_a_spec_confirmation_sheet(self):
         self.assertFalse(Controller.is_spec_sheet(screen('加入购物车', '数量', '已选', '颜色')))
 
@@ -114,7 +123,7 @@ class UiTest(unittest.TestCase):
 
     def test_auto_spec_confirmation_requires_exact_sku_and_native_quantity_one(self):
         p = Screen([Node('100366163164', (400, 550, 850, 610), source='ocr'),
-                    Node('1', (488, 636, 557, 716)),
+                    Node('1', (488, 636, 557, 716), class_name='android.widget.EditText'),
                     Node('颜色', (40, 1200, 200, 1250), source='ocr'),
                     Node('确定', (480, 2140, 590, 2200), source='ocr')], {JD_PACKAGE})
         self.assertTrue(Controller.is_spec_sheet(p))
@@ -122,6 +131,51 @@ class UiTest(unittest.TestCase):
         self.assertFalse(Controller.spec_matches({'expected_sku': '100366163165'}, p))
         p.nodes[1].text = '2'
         self.assertFalse(Controller.spec_matches({'expected_sku': '100366163164'}, p))
+
+    def test_image_sheet_can_match_without_readable_color_heading(self):
+        p = Screen([Node('编号：10236544822510', (398, 498, 772, 544), source='ocr'),
+                    Node('1', (488, 563, 557, 644), class_name='android.widget.EditText'),
+                    Node('确定', (501, 2149, 579, 2187), source='ocr')], {JD_PACKAGE})
+        self.assertTrue(Controller.is_spec_sheet(p))
+        self.assertTrue(Controller.spec_matches({'expected_sku': '10236544822510'}, p))
+        p.nodes[1].class_name = 'android.widget.TextView'
+        self.assertFalse(Controller.is_spec_sheet(p))
+        self.assertFalse(Controller.spec_matches({'expected_sku': '10236544822510'}, p))
+
+    def test_native_cta_does_not_suppress_image_sku_ocr(self):
+        xml = '''<hierarchy><node package="com.jingdong.app.mall" bounds="[0,0][1080,2400]">
+        <node text="1" class="android.widget.EditText" bounds="[488,563][557,644]"/>
+        <node text="加入购物车" clickable="true" bounds="[100,2146][980,2205]"/>
+        </node></hierarchy>'''
+        with TemporaryDirectory() as folder:
+            adb = Adb('test', Path(folder), binary='/fake/adb')
+            sku = Node('10236544822510', (398, 498, 772, 544), source='ocr')
+            with patch.object(adb, 'shell'), patch.object(adb, 'run', side_effect=[xml, b'png']), patch.object(adb, 'ocr', return_value=[sku]) as ocr:
+                page = adb.snapshot()
+            ocr.assert_called_once()
+            self.assertTrue(Controller.is_spec_sheet(page))
+            self.assertTrue(Controller.spec_matches({'expected_sku': '10236544822510'}, page))
+
+    def test_late_sheet_recovery_submits_once_then_verifies_cart(self):
+        sheet = Screen([Node('10236544822510', (398, 498, 772, 544), source='ocr'),
+                        Node('1', (488, 563, 557, 644), class_name='android.widget.EditText'),
+                        Node('加入购物车', (439, 2146, 646, 2205), source='ocr')], {JD_PACKAGE})
+        h = Harness(pages=[sheet, sheet, screen('购物车11件')])
+        item = {'id': 'x', 'expected_sku': '10236544822510', 'add_tapped': True, 'cart_count_before': 10}
+        h.verify_after_tap(item, engine.ADD_OK, 'added', '加购')
+        self.assertEqual(h.adb.taps, ['加入购物车'])
+        self.assertTrue(item['spec_submit_tapped'])
+        self.assertEqual(item['status'], 'added')
+
+    def test_submitted_sheet_is_never_submitted_again(self):
+        sheet = Screen([Node('10236544822510', (398, 498, 772, 544), source='ocr'),
+                        Node('1', (488, 563, 557, 644), class_name='android.widget.EditText'),
+                        Node('确定', (501, 2149, 579, 2187), source='ocr')], {JD_PACKAGE})
+        h = Harness(pages=[sheet], actions=['skip'])
+        item = {'id': 'x', 'expected_sku': '10236544822510', 'spec_submit_tapped': True}
+        h.verify_after_tap(item, engine.ADD_OK, 'added', '加购')
+        self.assertEqual(h.adb.taps, [])
+        self.assertEqual(item['status'], 'uncertain')
 
     def test_wireless_reconnect_never_replays_a_tap(self):
         adb = Adb('192.168.1.2:1234', binary='/fake/adb')
