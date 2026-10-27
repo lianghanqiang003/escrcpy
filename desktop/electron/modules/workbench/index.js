@@ -6,7 +6,7 @@ import { promisify } from 'node:util'
 import { app, ipcMain } from 'electron'
 import { getAdb } from '$electron/configs/which/index.js'
 import { extraResolve, getExtraPlatformDirs } from '$electron/process/resources.js'
-import { encodeKey, encodeTouch, VideoPacketReader } from './protocol.js'
+import { encodeKey, encodeText, encodeTouch, VideoPacketReader } from './protocol.js'
 
 const run = promisify(execFile)
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
@@ -247,6 +247,13 @@ export default {
       const targets = [...new Set(Array.isArray(input?.deviceIds) ? input.deviceIds : [])]
       if (!targets.length || targets.length > 64)
         throw new Error('Invalid control targets')
+      let packets
+      if (input.type === 'text')
+        packets = [encodeText(input.text, input.paste === true)]
+      else if (input.type === 'key')
+        packets = [encodeKey(input.keyCode, 0, input.metaState), encodeKey(input.keyCode, 1, input.metaState)]
+      if (!packets && input.type !== 'touch')
+        throw new Error('Unsupported control operation')
       let count = 0
       for (const deviceId of targets) {
         const session = sessions.get(`${event.sender.id}:${deviceId}`)
@@ -255,11 +262,10 @@ export default {
         if (input.type === 'touch') {
           session.control.write(encodeTouch(input, session.size))
         }
-        else if (input.type === 'key') {
-          session.control.write(encodeKey(input.keyCode, 0))
-          session.control.write(encodeKey(input.keyCode, 1))
+        else {
+          for (const packet of packets)
+            session.control.write(packet)
         }
-        else { throw new Error('Unsupported control operation') }
         count++
       }
       return count

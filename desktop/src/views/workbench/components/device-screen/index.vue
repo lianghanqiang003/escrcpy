@@ -11,6 +11,13 @@
     @contextmenu.prevent
   >
     <canvas ref="canvas" />
+    <textarea
+      ref="keyboardInput" class="keyboard-input" :aria-label="`${$t('workbench.keyboardInput')} · ${deviceId}`" :disabled="!interactive || status !== 'live'"
+      autocomplete="off" autocapitalize="off" :spellcheck="false"
+      @input="keyboard.input" @compositionstart="keyboard.compositionStart" @compositionend="keyboard.compositionEnd" @paste="keyboard.paste" @keydown="keyboard.keydown"
+      @focus="keyboardFocused = true" @blur="releaseKeyboard" @pointerdown.stop
+    />
+    <span v-if="keyboardFocused && interactive" class="keyboard-indicator">{{ $t('workbench.keyboardActive') }}</span>
     <div v-if="status !== 'live'" class="screen-placeholder">
       <i :class="error ? 'i-lucide-wifi-off' : 'i-lucide-loader-circle animate-spin'" />
       <strong>{{ error ? $t('workbench.disconnected') : $t('workbench.connecting') }}</strong>
@@ -26,6 +33,7 @@
 
 <script setup>
 import { getVideoPoint } from '../../helpers.js'
+import { createKeyboardInput } from '../../keyboard.js'
 
 const props = defineProps({
   deviceId: { type: String, required: true },
@@ -37,6 +45,8 @@ const emit = defineEmits(['status', 'input', 'select'])
 const ipc = window.$preload.ipcRenderer
 const canvas = ref(null)
 const surface = ref(null)
+const keyboardInput = ref(null)
+const keyboardFocused = ref(false)
 const status = ref('connecting')
 const error = ref('')
 const gesture = ref(null)
@@ -58,6 +68,20 @@ let needsKey = true
 let lastMove = 0
 let metricsTimer
 let gestureTimer
+const keyboard = createKeyboardInput((input) => {
+  if (props.interactive && status.value === 'live' && keyboardFocused.value)
+    emit('input', input)
+})
+
+function releaseKeyboard() {
+  keyboardFocused.value = false
+  keyboard.reset(keyboardInput.value)
+}
+
+function blurKeyboard() {
+  keyboardInput.value?.blur()
+  releaseKeyboard()
+}
 
 function setStatus(value, message = '') {
   status.value = value
@@ -181,6 +205,7 @@ async function restart() {
   const currentGeneration = ++generation
   clearTimeout(retryTimer)
   releaseTouch()
+  blurKeyboard()
   const previousId = sessionId
   const previousDeviceId = startedDeviceId
   sessionId = ''
@@ -228,6 +253,7 @@ function pointerDown(event) {
   if (!props.interactive || !getVideoPoint(event, surface.value, width, height, false))
     return
   event.preventDefault()
+  keyboardInput.value?.focus({ preventScroll: true })
   gesture.value = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY }
   surface.value.setPointerCapture(event.pointerId)
   input(0, event)
@@ -268,6 +294,7 @@ function begin() {
   active = true
   ipc.on('workbench:event', onEvent)
   window.addEventListener('blur', releaseTouch)
+  window.addEventListener('blur', blurKeyboard)
   metricsTimer = setInterval(() => {
     emit('status', { status: status.value, width, height, fps: frameCount, lastFrameAt })
     frameCount = 0
@@ -279,12 +306,14 @@ function end() {
   if (!active)
     return
   releaseTouch()
+  blurKeyboard()
   active = false
   generation++
   clearTimeout(retryTimer)
   clearInterval(metricsTimer)
   ipc.removeListener('workbench:event', onEvent)
   window.removeEventListener('blur', releaseTouch)
+  window.removeEventListener('blur', blurKeyboard)
   ipc.invoke('workbench:stop', startedDeviceId || props.deviceId, sessionId).catch(() => {})
   sessionId = ''
   closeDecoder()
@@ -300,7 +329,15 @@ watch(() => [props.deviceId, props.maxSize, props.fps], () => {
   if (active)
     restart()
 })
-watch(() => props.interactive, () => releaseTouch())
+watch(() => props.interactive, () => {
+  releaseTouch()
+  if (!props.interactive)
+    blurKeyboard()
+})
+watch(status, (value) => {
+  if (value !== 'live')
+    blurKeyboard()
+})
 onMounted(begin)
 onActivated(begin)
 onDeactivated(end)
@@ -326,6 +363,32 @@ canvas {
 }
 .interactive {
   cursor: crosshair;
+}
+.device-surface:focus-within {
+  outline: 2px solid #69d6b4;
+  outline-offset: -2px;
+}
+.keyboard-input {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  width: 2px;
+  height: 2px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  resize: none;
+}
+.keyboard-indicator {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: #0d2426e6;
+  color: #91e6cb;
+  font-size: 10px;
+  pointer-events: none;
 }
 .pressed {
   cursor: grabbing;

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 // These protocol checks intentionally run without an Electron or Vitest runtime.
 // eslint-disable-next-line test/no-import-node-test
 import test from 'node:test'
-import { encodeKey, encodeTouch, VideoPacketReader } from './protocol.js'
+import { encodeKey, encodeText, encodeTouch, VideoPacketReader } from './protocol.js'
 
 function metadata() {
   const data = Buffer.alloc(68)
@@ -78,4 +78,37 @@ test('invalid coordinates, actions and unsupported keys are rejected before cont
   assert.equal(key.length, 14)
   assert.equal(key[1], 1)
   assert.equal(key.readUInt32BE(2), 3)
+})
+
+test('Unicode text uses UTF-8 clipboard paste framing and preserves complete content', () => {
+  const text = '四川消费券🙂\nhttps://u.jd.com/test?a=1&b=2'
+  const packet = encodeText(text)
+  assert.equal(packet[0], 9)
+  assert.equal(packet.readBigUInt64BE(1), 0n)
+  assert.equal(packet[9], 1)
+  assert.equal(packet.readUInt32BE(10), Buffer.byteLength(text))
+  assert.equal(packet.subarray(14).toString('utf8'), text)
+  assert.equal(packet.length, Buffer.byteLength(text) + 14)
+  for (const invalid of ['', null, '中'.repeat(22000)])
+    assert.throws(() => encodeText(invalid))
+})
+
+test('fast ASCII typing avoids clipboard replacement while explicit paste remains atomic', () => {
+  const direct = encodeText('abc 123!?')
+  assert.equal(direct[0], 1)
+  assert.equal(direct.readUInt32BE(1), 9)
+  assert.equal(direct.subarray(5).toString(), 'abc 123!?')
+  assert.equal(encodeText('a'.repeat(301))[0], 9)
+  assert.equal(encodeText('ascii pasted', true)[0], 9)
+})
+
+test('editing keys preserve modifier state in both down and up packets', () => {
+  for (const action of [0, 1]) {
+    const selectAll = encodeKey(29, action, 4096)
+    assert.equal(selectAll.readUInt32BE(2), 29)
+    assert.equal(selectAll.readUInt32BE(10), 4096)
+    assert.equal(encodeKey(21, action, 1).readUInt32BE(10), 1)
+  }
+  assert.throws(() => encodeKey(29, 0, 128))
+  assert.throws(() => encodeKey(67, 0, -1))
 })

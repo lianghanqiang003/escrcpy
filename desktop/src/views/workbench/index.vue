@@ -79,6 +79,9 @@
       <div class="workspace-strip">
         <span><i class="status-dot live" />{{ $t('workbench.autoDiscover') }}</span><span>{{ $t('workbench.streamQuality', { fps: maxFps }) }}</span><span class="mode-indicator" :class="{ sync: broadcast && interactive }">{{ $t(interactive ? broadcast ? 'workbench.syncActive' : 'workbench.singleControl' : 'workbench.viewOnly') }}</span>
       </div>
+      <p v-if="interactive" class="keyboard-help">
+        {{ $t('workbench.keyboardHint') }}
+      </p>
       <div v-if="devices.length" ref="gridElement" class="screen-grid" :class="{ focused: !!focusedId }" :style="screenLayout.grid">
         <article v-for="(device, index) in devices" :key="identity(device)" class="phone-card" :class="{ 'selected': selectedId === device.id, 'drop-target': draggedId && draggedId !== identity(device), 'enlarged': focusedId === device.id }" :style="{ ...screenLayout.cards[index], '--screen-ratio': screenRatio(device.id) }" @dragover.prevent @drop.prevent="dropDevice(device)">
           <header class="phone-header" @click="selectedId = device.id">
@@ -122,6 +125,7 @@
 import DeviceScreen from './components/device-screen/index.vue'
 import ScriptPanel from './components/script-panel/index.vue'
 import { getScreenLayout, orderDevices, selectOnlineDevices } from './helpers.js'
+import { keyboardTargets } from './keyboard.js'
 
 const router = useRouter()
 const store = useDeviceStore()
@@ -242,6 +246,16 @@ function reportError(error) {
 }
 
 function control(id, input) {
+  if (input.type === 'text' || input.type === 'key') {
+    const deviceIds = keyboardTargets(id, { interactive: interactive.value, broadcast: broadcast.value, selectedId: selectedId.value, deviceIds: devices.value.map(device => device.id), lockedIds: automationLocks.value.deviceIds })
+    if (deviceIds.length) {
+      ipc.invoke('workbench:input', { ...input, deviceIds }).then((count) => {
+        if (count !== deviceIds.length)
+          reportError(new Error('Some keyboard targets are not ready'))
+      }).catch(reportError)
+    }
+    return
+  }
   let deviceIds = gestures.get(id)
   // An in-progress gesture keeps its original targets even if sync is toggled.
   if (input.action === 0) {
@@ -322,6 +336,11 @@ onBeforeUnmount(end)
 }
 .workbench:fullscreen {
   border-radius: 0;
+}
+.keyboard-help {
+  margin: -3px 0 12px;
+  color: #9ab9b7;
+  font-size: 12px;
 }
 .workbench button {
   cursor: pointer;

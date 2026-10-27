@@ -67,12 +67,31 @@ export function encodeTouch(input, size) {
   return packet
 }
 
-export function encodeKey(keyCode, action) {
-  if (![3, 4, 24, 25, 187, 224].includes(keyCode) || ![0, 1].includes(action))
-    throw new Error('Unsupported navigation key')
+export function encodeKey(keyCode, action, metaState = 0) {
+  if (![3, 4, 19, 20, 21, 22, 24, 25, 29, 61, 66, 67, 92, 93, 111, 112, 122, 123, 187, 224].includes(keyCode) || ![0, 1].includes(action)
+    || ![0, 1, 4096, 4097].includes(metaState)) {
+    throw new Error('Unsupported control key')
+  }
   const packet = Buffer.alloc(14)
   packet[0] = 0
   packet[1] = action
   packet.writeUInt32BE(keyCode, 2)
+  packet.writeUInt32BE(metaState, 10)
+  return packet
+}
+
+export function encodeText(text, paste = false) {
+  if (typeof text !== 'string' || !text.length || Buffer.byteLength(text, 'utf8') > 65536)
+    throw new Error('Text must contain 1 to 65536 UTF-8 bytes')
+  const bytes = Buffer.from(text, 'utf8')
+  // Printable ASCII uses direct key injection, so fast typing never races
+  // successive clipboard replacements. IME commits/paste use UTF-8 clipboard.
+  const direct = !paste && /^[\x20-\x7E]{1,300}$/.test(text)
+  const packet = Buffer.alloc((direct ? 5 : 14) + bytes.length)
+  packet[0] = direct ? 1 : 9
+  if (!direct)
+    packet[9] = 1 // sequence 0: no clipboard ACK requested; paste into editor
+  packet.writeUInt32BE(bytes.length, direct ? 1 : 10)
+  bytes.copy(packet, direct ? 5 : 14)
   return packet
 }
