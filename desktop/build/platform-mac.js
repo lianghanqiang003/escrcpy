@@ -12,12 +12,14 @@ export const mac = {
   extraResources: {
     from: 'electron/resources/extra',
     to: 'extra',
-    filter: ['common', 'mac', 'mac-${arch}'],
+    filter: ['common', 'mac', 'mac-${arch}', '!**/__pycache__/**', '!**/*.pyc'],
   },
   x64ArchFiles: 'Contents/Resources/extra/**/*',
   entitlements: 'electron/resources/build/entitlements.mac.plist',
   entitlementsInherit: 'electron/resources/build/entitlements.mac.plist',
   extendInfo: {
+    NSLocalNetworkUsageDescription:
+      'Connect to your Android devices over the local network for live screen mirroring and control.',
     NSDocumentsFolderUsageDescription:
       'Application requests access to the user\'s Documents folder.',
     NSDownloadsFolderUsageDescription:

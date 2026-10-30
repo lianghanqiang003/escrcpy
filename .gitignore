@@ -19,7 +19,6 @@ lerna-debug.log*
 
 # User
 node_modules
-pnpm-lock.yaml
 package-lock.json
 yarn.lock
 *.local
@@ -29,3 +28,9 @@ yarn.lock
 
 # Dist
 dist*
+
+# Local automation artifacts
+__pycache__/
+*.pyc
+**/automation/ocr-preprocess
+**/automation/jd-cart/runs/

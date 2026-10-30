@@ -52,6 +52,13 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/workbench/': RouteRecordInfo<
+      '/workbench/',
+      '/workbench',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
   }
 
   /**
@@ -84,6 +91,14 @@ declare module 'vue-router/auto-routes' {
     'src/views/preference/index.vue': {
       routes:
         | '/preference/'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/views/workbench/index.vue': {
+      routes:
+        | '/workbench/'
       views:
         | never
       pathParamNames:

@@ -18,9 +18,7 @@ let initialized = false
 let _silent = false
 
 function getManualDownloadUrl() {
-  const locale = navigator.language || 'en-US'
-  const localePath = locale.startsWith('zh') ? 'zhHans/' : ''
-  return `https://viarotel.eu.org/${localePath}guide/started`
+  return 'https://github.com/lianghanqiang003/escrcpy/releases'
 }
 
 function initListeners() {

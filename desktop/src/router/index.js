@@ -3,7 +3,7 @@ import { handleHotUpdate, routes } from 'vue-router/auto-routes'
 
 routes.push({
   path: '/',
-  redirect: '/device',
+  redirect: '/workbench',
 })
 
 export const router = createRouter({
