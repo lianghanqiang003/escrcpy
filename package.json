@@ -1,7 +1,7 @@
 {
   "name": "@escrcpy/workspace",
   "type": "module",
-  "version": "3.3.1-workbench.6",
+  "version": "3.3.1-workbench.7",
   "private": true,
   "packageManager": "pnpm@10.29.2+sha512.bef43fa759d91fd2da4b319a5a0d13ef7a45bb985a3d7342058470f9d2051a3ba8674e629672654686ef9443ad13a82da2beb9eeb3e0221c87b8154fff9d74b8",
   "description": "Scrcpy Powered by Electron",
@@ -9,7 +9,7 @@
   "homepage": "https://github.com/lianghanqiang003/escrcpy",
   "main": "dist-electron/main.js",
   "scripts": {
-    "test:workbench": "node --test desktop/electron/modules/workbench-automation/validation.test.js desktop/electron/modules/workbench/protocol.test.js desktop/src/views/workbench/helpers.test.js desktop/src/views/workbench/keyboard.test.js",
+    "test:workbench": "node --test desktop/electron/modules/workbench-automation/validation.test.js desktop/electron/modules/workbench/protocol.test.js desktop/electron/modules/workbench/video-options.test.js desktop/src/views/workbench/helpers.test.js desktop/src/views/workbench/keyboard.test.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "dev": "turbo dev",

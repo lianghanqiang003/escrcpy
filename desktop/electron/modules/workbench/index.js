@@ -7,6 +7,7 @@ import { app, ipcMain } from 'electron'
 import { getAdb } from '$electron/configs/which/index.js'
 import { extraResolve, getExtraPlatformDirs } from '$electron/process/resources.js'
 import { encodeKey, encodeText, encodeTouch, VideoPacketReader } from './protocol.js'
+import { getVideoOptions } from './video-options.js'
 
 const run = promisify(execFile)
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
@@ -142,8 +143,7 @@ export default {
       const key = `${owner.id}:${deviceId}`
       stop(sessions.get(key))
       bindOwner(owner)
-      const maxSize = [540, 720, 1080].includes(options.maxSize) ? options.maxSize : 720
-      const fps = [15, 24, 30].includes(options.fps) ? options.fps : 24
+      const { maxSize, fps, bitRate } = getVideoOptions(options)
       const scid = randomBytes(4).readUInt32BE() & 0x7FFFFFFF
       const id = scid.toString(16).padStart(8, '0')
       const session = { key, id, deviceId, owner, requestId: String(options.requestId || '').slice(0, 128), pending: new Set(), sequence: 0, waitKey: true, log: '', size: {} }
@@ -174,7 +174,7 @@ export default {
         const args = [
           `CLASSPATH=${remote}`, 'app_process', '/', 'com.genymobile.scrcpy.Server', version,
           `scid=${id}`, 'log_level=warn', 'video=true', 'audio=false', 'control=true',
-          `max_size=${maxSize}`, `max_fps=${fps}`, 'video_bit_rate=2500000', 'video_codec=h264',
+          `max_size=${maxSize}`, `max_fps=${fps}`, `video_bit_rate=${bitRate}`, 'video_codec=h264',
           'tunnel_forward=true', 'send_device_meta=true', 'send_stream_meta=true',
           'send_frame_meta=true', 'send_dummy_byte=true', 'video_codec_options=i-frame-interval=1',
           'cleanup=true', 'clipboard_autosync=false', 'power_on=true', 'stay_awake=true',

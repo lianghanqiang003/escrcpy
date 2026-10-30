@@ -41,13 +41,17 @@
           <button class="script-toggle" :class="{ active: scriptsOpen }" @click="scriptsOpen = !scriptsOpen">
             <i class="i-lucide-workflow" /><span>{{ $t('automation.title') }}</span><b v-if="automationLocks.active" />
           </button>
-          <select v-model.number="maxSize" :aria-label="$t('workbench.quality')">
+          <select v-model.number="maxSize" :aria-label="$t('workbench.quality')" :title="$t('workbench.qualityHint')">
             <option :value="540">
               {{ $t('workbench.qualityCompact') }}
             </option><option :value="720">
               {{ $t('workbench.qualityBalanced') }}
             </option><option :value="1080">
               {{ $t('workbench.qualityHigh') }}
+            </option><option :value="1920">
+              {{ $t('workbench.qualityUltra') }}
+            </option><option :value="0">
+              {{ $t('workbench.qualityNative') }}
             </option>
           </select>
           <button :title="$t('workbench.refresh')" @click="refresh">
@@ -122,6 +126,7 @@
 </template>
 
 <script setup>
+import { getVideoOptions } from '$electron/modules/workbench/video-options.js'
 import DeviceScreen from './components/device-screen/index.vue'
 import ScriptPanel from './components/script-panel/index.vue'
 import { getScreenLayout, orderDevices, selectOnlineDevices } from './helpers.js'
@@ -140,13 +145,13 @@ const gridElement = ref(null)
 const gridSize = useElementSize(gridElement)
 const tileWidth = useLocalStorage('escrcpy-workbench-tile-width', 180)
 const layoutColumns = useLocalStorage('escrcpy-workbench-columns', 0)
-const maxSize = ref(720)
+const maxSize = useLocalStorage('escrcpy-workbench-video-max-size', 1920)
 const interactive = ref(false)
 const broadcast = ref(false)
 const scriptsOpen = ref(false)
 const automationLocks = ref({ active: false, deviceIds: [] })
 const refreshing = ref(false)
-const maxFps = computed(() => maxSize.value === 1080 ? 30 : 24)
+const maxFps = computed(() => getVideoOptions({ maxSize: maxSize.value }).fps)
 const liveCount = computed(() => devices.value.filter(device => metrics[device.id]?.status === 'live').length)
 const screenLayout = computed(() => getScreenLayout({
   count: devices.value.length,

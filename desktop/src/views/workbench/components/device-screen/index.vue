@@ -37,7 +37,7 @@ import { createKeyboardInput } from '../../keyboard.js'
 
 const props = defineProps({
   deviceId: { type: String, required: true },
-  maxSize: { type: Number, default: 720 },
+  maxSize: { type: Number, default: 1920 },
   fps: { type: Number, default: 24 },
   interactive: Boolean,
 })
