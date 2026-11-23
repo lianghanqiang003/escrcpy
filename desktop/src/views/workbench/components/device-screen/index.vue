@@ -33,12 +33,14 @@
 
 <script setup>
 import { getVideoPoint } from '../../helpers.js'
+import { createFramePresenter } from '../../frame-presenter.js'
 import { createKeyboardInput } from '../../keyboard.js'
+import { createVideoDecoder } from '../../video-decoder.js'
 
 const props = defineProps({
   deviceId: { type: String, required: true },
   maxSize: { type: Number, default: 1920 },
-  fps: { type: Number, default: 24 },
+  fps: { type: Number, default: 60 },
   interactive: Boolean,
 })
 const emit = defineEmits(['status', 'input', 'select'])
@@ -50,9 +52,6 @@ const keyboardFocused = ref(false)
 const status = ref('connecting')
 const error = ref('')
 const gesture = ref(null)
-let decoder
-let configuration
-let codec = ''
 let sessionId = ''
 let startedDeviceId = ''
 let requestId = ''
@@ -64,13 +63,48 @@ let frameCount = 0
 let width = 0
 let height = 0
 let lastFrameAt = 0
-let needsKey = true
 let lastMove = 0
 let metricsTimer
 let gestureTimer
+let context
+let video
 const keyboard = createKeyboardInput((input) => {
   if (props.interactive && status.value === 'live' && keyboardFocused.value)
     emit('input', input)
+})
+const presenter = createFramePresenter({
+  draw(frame) {
+    const element = canvas.value
+    if (!element || !active)
+      return
+    if (element.width !== frame.displayWidth || element.height !== frame.displayHeight) {
+      element.width = frame.displayWidth
+      element.height = frame.displayHeight
+    }
+    context ||= element.getContext('2d', { alpha: false, desynchronized: true })
+    context.drawImage(frame, 0, 0)
+    frameCount++
+    lastFrameAt = Date.now()
+    if (status.value !== 'live')
+      setStatus('live')
+  },
+  onError(reason) {
+    video.close()
+    setStatus('error', reason.message)
+    scheduleRetry()
+  },
+})
+video = createVideoDecoder({
+  acknowledge(packet) {
+    if (packet.sequence)
+      ipc.send('workbench:ack', packet.deviceId, packet.sessionId, packet.sequence)
+  },
+  draw: frame => presenter.present(frame),
+  onError(reason) {
+    presenter.close()
+    setStatus('error', reason.message)
+    scheduleRetry()
+  },
 })
 
 function releaseKeyboard() {
@@ -89,53 +123,6 @@ function setStatus(value, message = '') {
   emit('status', { status: value, error: message, width, height })
 }
 
-function findCodec(data) {
-  for (let i = 0; i + 7 < data.length; i++) {
-    let start = -1
-    if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 1)
-      start = i + 3
-    else if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 0 && data[i + 3] === 1)
-      start = i + 4
-    if (start >= 0 && (data[start] & 31) === 7)
-      return `avc1.${Array.from(data.subarray(start + 1, start + 4), x => x.toString(16).padStart(2, '0')).join('')}`
-  }
-  throw new Error(window.t('workbench.codecError'))
-}
-
-function configure(data) {
-  const nextCodec = findCodec(data)
-  configuration = data
-  if (decoder?.state === 'configured' && codec === nextCodec)
-    return
-  closeDecoder()
-  codec = nextCodec
-  decoder = new VideoDecoder({
-    output(frame) {
-      try {
-        const element = canvas.value
-        if (!element)
-          return
-        if (element.width !== frame.displayWidth || element.height !== frame.displayHeight) {
-          element.width = frame.displayWidth
-          element.height = frame.displayHeight
-        }
-        element.getContext('2d', { alpha: false }).drawImage(frame, 0, 0)
-        frameCount++
-        lastFrameAt = Date.now()
-        if (status.value !== 'live')
-          setStatus('live')
-      }
-      finally { frame.close() }
-    },
-    error(reason) {
-      setStatus('error', reason.message)
-      scheduleRetry()
-    },
-  })
-  decoder.configure({ codec, optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware' })
-  needsKey = true
-}
-
 function onEvent(_, packet) {
   if (packet.deviceId !== props.deviceId || packet.requestId !== requestId || !active)
     return
@@ -145,53 +132,39 @@ function onEvent(_, packet) {
     return
   if (!sessionId)
     sessionId = packet.sessionId
+  let frameHandled = false
   try {
     if (packet.type === 'size') {
       width = packet.width
       height = packet.height
-      closeDecoder()
-      decoder = null
-      codec = ''
-      configuration = null
-      needsKey = true
+      video.close()
+      presenter.close()
       emit('status', { status: status.value, width, height })
     }
     else if (packet.type === 'config') {
-      configure(new Uint8Array(packet.data))
+      video.configure(new Uint8Array(packet.data))
     }
     else if (packet.type === 'frame') {
-      if (!decoder || decoder.state !== 'configured' || (needsKey && !packet.key))
-        return
-      if (decoder.decodeQueueSize > 5) {
-        decoder.reset()
-        decoder.configure({ codec, optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware' })
-        needsKey = true
-        if (!packet.key)
-          return
-      }
-      const data = new Uint8Array(packet.data)
-      let bytes = data
-      if (packet.key && configuration) {
-        bytes = new Uint8Array(configuration.length + data.length)
-        bytes.set(configuration)
-        bytes.set(data, configuration.length)
-      }
-      decoder.decode(new EncodedVideoChunk({ type: packet.key ? 'key' : 'delta', timestamp: packet.timestamp, data: bytes }))
-      needsKey = false
+      frameHandled = true
+      video.decode(packet)
     }
     else if (packet.type === 'error' || packet.type === 'stopped') {
       releaseTouch()
+      video.close()
+      presenter.close()
       setStatus('error', packet.message)
       scheduleRetry()
     }
   }
   catch (reason) {
+    video.close()
+    presenter.close()
     setStatus('error', reason.message)
     scheduleRetry()
   }
   finally {
-    if (packet.sequence)
-      ipc.send('workbench:ack', props.deviceId, packet.sessionId, packet.sequence)
+    if (packet.sequence && !frameHandled)
+      ipc.send('workbench:ack', packet.deviceId, packet.sessionId, packet.sequence)
   }
 }
 
@@ -210,11 +183,8 @@ async function restart() {
   const previousDeviceId = startedDeviceId
   sessionId = ''
   requestId = `${instanceId}-${currentGeneration}`
-  closeDecoder()
-  decoder = null
-  codec = ''
-  configuration = null
-  needsKey = true
+  video.close()
+  presenter.close()
   try {
     if (previousId)
       await ipc.invoke('workbench:stop', previousDeviceId, previousId)
@@ -266,7 +236,7 @@ function pointerMove(event) {
   if (!gesture.value || gesture.value.pointerId !== event.pointerId)
     return
   gesture.value = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY }
-  if (performance.now() - lastMove < 24)
+  if (performance.now() - lastMove < 16)
     return
   lastMove = performance.now()
   input(2, event)
@@ -296,6 +266,12 @@ function begin() {
   window.addEventListener('blur', releaseTouch)
   window.addEventListener('blur', blurKeyboard)
   metricsTimer = setInterval(() => {
+    if (video.isStalled()) {
+      video.close()
+      presenter.close()
+      setStatus('error', window.t('workbench.decodeStalled'))
+      scheduleRetry()
+    }
     emit('status', { status: status.value, width, height, fps: frameCount, lastFrameAt })
     frameCount = 0
   }, 1000)
@@ -316,13 +292,8 @@ function end() {
   window.removeEventListener('blur', blurKeyboard)
   ipc.invoke('workbench:stop', startedDeviceId || props.deviceId, sessionId).catch(() => {})
   sessionId = ''
-  closeDecoder()
-  decoder = null
-}
-
-function closeDecoder() {
-  if (decoder && decoder.state !== 'closed')
-    decoder.close()
+  video.close()
+  presenter.close()
 }
 
 watch(() => [props.deviceId, props.maxSize, props.fps], () => {

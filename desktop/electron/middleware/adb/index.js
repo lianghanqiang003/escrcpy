@@ -361,6 +361,8 @@ async function pair(host, port, code) {
 async function connect(host, port) {
   const address = port ? `${host}:${port}` : host
 
+  await electronAPI.ipcRenderer.invoke('adb-recovery:set-suppressed', { id: address, suppressed: false })
+
   const { stderr, stdout } = await shell(`connect ${address}`)
 
   if (stderr) {
@@ -378,6 +380,8 @@ async function connect(host, port) {
 
 async function disconnect(host, port) {
   const address = port ? `${host}:${port}` : host
+
+  await electronAPI.ipcRenderer.invoke('adb-recovery:set-suppressed', { id: address, suppressed: true })
 
   const { stderr, stdout } = await shell(`disconnect ${address}`)
 

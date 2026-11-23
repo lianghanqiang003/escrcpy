@@ -4,11 +4,11 @@ import test from 'node:test'
 import { getVideoOptions } from './video-options.js'
 
 test('native resolution zero survives validation instead of falling back to a thumbnail', () => {
-  assert.deepEqual(getVideoOptions({ maxSize: 0 }), { maxSize: 0, bitRate: 12000000, fps: 30 })
+  assert.deepEqual(getVideoOptions({ maxSize: 0 }), { maxSize: 0, bitRate: 12000000, fps: 60 })
 })
 
 test('higher resolution receives an appropriate bitrate and the default is readable on Retina', () => {
-  assert.deepEqual(getVideoOptions(), { maxSize: 1920, bitRate: 8000000, fps: 30 })
+  assert.deepEqual(getVideoOptions(), { maxSize: 1920, bitRate: 8000000, fps: 60 })
   const sizes = [540, 720, 1080, 1920, 0]
   const rates = sizes.map(maxSize => getVideoOptions({ maxSize }).bitRate)
   assert.ok(rates.every((rate, index) => index === 0 || rate > rates[index - 1]))
@@ -21,4 +21,7 @@ test('unsupported sizes and frame rates use bounded defaults; lower requested FP
   assert.equal(getVideoOptions({ maxSize: 540, fps: 30 }).fps, 24)
   assert.equal(getVideoOptions({ maxSize: 0, fps: 15 }).fps, 15)
   assert.equal(getVideoOptions({ maxSize: 720, fps: -1 }).fps, 24)
+  assert.equal(getVideoOptions({ maxSize: 1920, fps: 30 }).fps, 30)
+  assert.equal(getVideoOptions({ maxSize: 1920, fps: 60 }).fps, 60)
+  assert.equal(getVideoOptions({ maxSize: 540, fps: 60 }).fps, 24)
 })

@@ -22,7 +22,10 @@ def screen(*labels):
 class FakeAdb:
     def __init__(self):
         self.taps = []
+        self.opened = []
         self.run_dir = None
+    def open_link(self, url):
+        self.opened.append(url)
     def tap(self, node):
         self.taps.append(node.text)
     def quick_result(self, _):
@@ -48,6 +51,49 @@ class Harness(Controller):
 
 
 class LinksTest(unittest.TestCase):
+    def test_three_cn_http_redirect_retains_the_complete_coupon_url(self):
+        from unittest.mock import Mock
+        final = 'https://coupon.m.jd.com/coupons/show.action?linkKey=Ab_-1%2F2&to=m.jd.com&track=kept'
+        response = Mock(url=final)
+        response.read.return_value = b'<title>coupon</title>'
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        opener = Mock()
+        opener.open.return_value = response
+        with patch('jd_engine.urllib.request.build_opener', return_value=opener):
+            self.assertEqual(expand_short_link('https://3.cn/3b-example'), final)
+        self.assertEqual(opener.open.call_count, 1)
+
+    def test_short_link_may_land_on_an_official_activity_without_becoming_a_product(self):
+        from unittest.mock import Mock
+        final = 'https://pro.m.jd.com/mall/active/activity/index.html?source=kept'
+        response = Mock(url=final)
+        response.read.return_value = b'<html></html>'
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        opener = Mock()
+        opener.open.return_value = response
+        with patch('jd_engine.urllib.request.build_opener', return_value=opener):
+            self.assertEqual(expand_short_link('https://3.cn/activity'), final)
+        self.assertEqual(engine.link_kind(final), 'auto')
+
+    def test_short_link_rejects_unsafe_http_and_literal_js_redirects(self):
+        from unittest.mock import Mock
+        opener = Mock()
+        response = Mock(url='https://3.cn/unsafe')
+        response.read.return_value = b"var hrl='https://evil.invalid/coupon';"
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        opener.open.return_value = response
+        with patch('jd_engine.urllib.request.build_opener', return_value=opener) as build:
+            with self.assertRaises(ValueError):
+                expand_short_link('https://3.cn/unsafe')
+        redirect = build.call_args.args[0]
+        for destination in ['https://evil.invalid/a', 'https://coupon.m.jd.com:999/a',
+                            'https://user:password@coupon.m.jd.com/a', 'file:///etc/passwd']:
+            with self.assertRaises(ValueError):
+                redirect.redirect_request(None, None, 302, '', {}, destination)
+
     def test_short_link_keeps_complete_tracked_product_url(self):
         final = 'https://item.m.jd.com/product/123456.html?uabt=abc&cu=true&utm_campaign=t_2037_'
         class Response:
@@ -95,6 +141,39 @@ class LinksTest(unittest.TestCase):
 
 
 class UiTest(unittest.TestCase):
+    def test_three_cn_is_resolved_before_opening_jd_and_classifies_an_already_claimed_coupon(self):
+        final = 'https://coupon.m.jd.com/coupons/show.action?linkKey=kept&to=m.jd.com'
+        h = Harness(pages=[screen('已领取')])
+        item = {'id': 'coupon', 'url': 'https://3.cn/3b-example', 'kind': 'auto'}
+        with patch('jd_engine.expand_short_link', return_value=final), patch('jd_engine.time.sleep'):
+            h.process(item)
+        self.assertEqual(h.adb.opened, [final], 'never open the raw 3.cn URL in the JD WebView')
+        self.assertEqual(item['resolved_url'], final)
+        self.assertEqual(item['resolved_kind'], 'coupon')
+        self.assertEqual(item['status'], 'already_claimed')
+        self.assertEqual(h.prompts, [])
+        self.assertEqual(h.adb.taps, [])
+
+    def test_coupon_only_skips_resolved_products_before_navigating(self):
+        h = Harness()
+        item = {'id': 'product', 'url': 'https://3.cn/product', 'kind': 'auto'}
+        with patch('jd_engine.expand_short_link', return_value='https://item.jd.com/123.html'), \
+                patch.dict(engine.os.environ, {'JD_COUPON_ONLY': '1'}):
+            h.process(item)
+        self.assertEqual(item['status'], 'skipped')
+        self.assertEqual(h.adb.opened, [])
+        self.assertEqual(h.adb.taps, [])
+
+    def test_manual_short_link_recovery_inspects_the_users_page_without_reopening_the_link(self):
+        h = Harness(pages=[screen('已领取')], actions=['continue'])
+        item = {'id': 'coupon', 'url': 'https://3.cn/manual', 'kind': 'coupon'}
+        with patch('jd_engine.expand_short_link', side_effect=RuntimeError('network unavailable')), \
+                patch('jd_engine.time.sleep'):
+            h.process(item)
+        self.assertEqual(item['status'], 'already_claimed')
+        self.assertEqual(h.adb.opened, [])
+        self.assertEqual(h.adb.taps, [])
+
     def test_cart_quantity_delta_is_recorded_and_must_be_exactly_one(self):
         item = {'cart_count_before': 13}
         self.assertTrue(Controller.cart_increased(item, screen('购物车14件')))

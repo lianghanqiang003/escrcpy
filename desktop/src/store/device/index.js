@@ -63,13 +63,18 @@ export const useDeviceStore = defineStore('app-device', () => {
   }
 
   async function getList() {
-    const historyDevices = getHistoryDevices()
     const currentDevices = await getCurrentDevices()
+    // A removal made while ADB was being queried must not be saved back as history.
+    const historyDevices = getHistoryDevices()
     const mergedDevices = mergeDevices(historyDevices, currentDevices)
     saveDevicesToStore(mergedDevices)
     list.value = mergedDevices
     return mergedDevices
   }
+
+  window.$preload.ipcRenderer.on('adb-recovery:changed', () => {
+    getList().catch(error => console.warn('[device:recovery]', error.message))
+  })
 
   function setRemark(deviceId, value) {
     $electronStore.set(['device', deviceId, 'remark'], value)

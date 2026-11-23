@@ -28,6 +28,7 @@ import workbenchModule from './modules/workbench/index.js'
 import workbenchAutomationModule from './modules/workbench-automation/index.js'
 
 import {
+  adbRecoveryService,
   contextMenuService,
   edgerService,
   handlesService,
@@ -77,6 +78,7 @@ mainApp.use(contextMenuService)
 mainApp.use(updaterService)
 mainApp.use(launchService)
 mainApp.use(shortcutsService)
+mainApp.use(adbRecoveryService)
 
 mainApp.use(controlModule)
 mainApp.use(explorerModule)

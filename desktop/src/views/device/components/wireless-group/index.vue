@@ -86,7 +86,7 @@
 <script setup>
 import pLimit from 'p-limit'
 import { sleep } from '$/utils'
-import { parseDeviceId } from '$/utils/device'
+import { parseDeviceId, removeDevices } from '$/utils/device'
 import DiscoverAction from './discover-action/index.vue'
 import QrAction from './qr-action/index.vue'
 
@@ -182,15 +182,9 @@ function onSelect(device) {
   address.value = device.id
 }
 
-function handleRemove(info) {
-  const index = wirelessList.value.findIndex(
-    item => item.id === info.id,
-  )
-
-  if (index === -1)
-    return
-
-  wirelessList.value.splice(index, 1)
+async function handleRemove(info) {
+  removeDevices(info)
+  await deviceStore.getList()
   autocompleteKey.value++
 }
 

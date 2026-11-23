@@ -54,6 +54,49 @@ test('malformed media length cannot grow an unbounded receive buffer', () => {
   assert.throws(() => reader.push(Buffer.concat([metadata(), header])), /length/)
 })
 
+test('slow decoding pauses a burst of H.264 frames without dropping reference packets', () => {
+  const received = []
+  const pending = new Set()
+  const reader = new VideoPacketReader((packet) => {
+    if (packet.type !== 'frame')
+      return
+    if (pending.size >= 4)
+      return false
+    pending.add(packet.timestamp)
+    received.push(packet.timestamp)
+  })
+  const packets = Array.from({ length: 80 }, (_, index) => frame(
+    (index === 0 ? 1n << 61n : 0n) | BigInt(index), Buffer.from([0, 0, 1, index === 0 ? 0x65 : 0x41, index]),
+  ))
+  assert.equal(reader.push(Buffer.concat([metadata(), size(864, 1920), ...packets])), false)
+  assert.deepEqual(received, [0, 1, 2, 3])
+  while (reader.buffer.length) {
+    pending.delete(pending.values().next().value)
+    reader.drain()
+    assert.ok(pending.size <= 4)
+  }
+  assert.deepEqual(received, Array.from({ length: 80 }, (_, index) => index))
+})
+
+test('paused packet boundaries survive fragmented input and later video size changes', () => {
+  const received = []
+  let blocked = true
+  const reader = new VideoPacketReader((packet) => {
+    if (packet.type === 'frame' && blocked)
+      return false
+    received.push(packet)
+  })
+  const first = Buffer.concat([metadata(), size(864, 1920), frame(1n << 61n, Buffer.from([1, 2, 3]))])
+  reader.push(first.subarray(0, -1))
+  assert.equal(reader.push(first.subarray(-1)), false)
+  blocked = false
+  assert.equal(reader.drain(), true)
+  reader.push(size(1920, 864))
+  assert.equal(received.length, 3)
+  assert.deepEqual([...received[1].data], [1, 2, 3])
+  assert.deepEqual(received[2], { type: 'size', width: 1920, height: 864 })
+})
+
 test('touch is scaled independently for each phone and releases pressure on up/cancel', () => {
   const a = encodeTouch({ action: 0, x: 0.5, y: 1 }, { width: 324, height: 720 })
   const b = encodeTouch({ action: 1, x: 0.5, y: 1 }, { width: 720, height: 1600 })

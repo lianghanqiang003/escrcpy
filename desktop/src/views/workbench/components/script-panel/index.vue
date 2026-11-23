@@ -169,6 +169,9 @@ const vipRefresh = ref(true)
 const now = useNow({ interval: 1000 })
 const vipClaimAt = computed(() => Date.parse(`${vipDate.value}T${vipTime.value}:00+08:00`))
 let initialized = false
+let stateTimer
+let refreshingState = false
+let disposed = false
 const identity = device => device.serialNo || device.id
 const label = device => device.remark || device.name || device.model || device.id
 const selectedDevices = computed(() => props.devices.filter(device => selected.value.includes(identity(device))))
@@ -248,12 +251,39 @@ async function openReport() {
 function receive(_, value) {
   task.value = value
 }
+async function refreshState() {
+  if (disposed || !props.open || refreshingState || starting.value)
+    return
+  refreshingState = true
+  const previous = task.value
+  try {
+    const current = await ipc.invoke('workbench-automation:state')
+    // A late poll must not overwrite a new start result or a newer push event.
+    if (!disposed && !starting.value && task.value === previous)
+      task.value = current
+  }
+  catch (error) {
+    console.warn('[automation:state]', error.message)
+  }
+  finally {
+    refreshingState = false
+  }
+}
+watch(() => props.open, (open) => {
+  if (open)
+    refreshState()
+})
 function waitTime(timestamp) {
   const seconds = Math.max(0, Math.ceil((timestamp - now.value.getTime()) / 1000))
   return `${Math.floor(seconds / 3600)}:${String(Math.floor(seconds / 60) % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
 }
 onMounted(async () => {
   ipc.on('workbench-automation:event', receive)
+  window.addEventListener('focus', refreshState)
+  stateTimer = setInterval(() => {
+    if (task.value?.active)
+      refreshState()
+  }, 1000)
   try {
     const [catalog, current] = await Promise.all([ipc.invoke('workbench-automation:catalog'), ipc.invoke('workbench-automation:state')])
     scriptIds.value = catalog.scriptIds
@@ -264,7 +294,12 @@ onMounted(async () => {
     showError(error)
   }
 })
-onBeforeUnmount(() => ipc.removeListener('workbench-automation:event', receive))
+onBeforeUnmount(() => {
+  disposed = true
+  clearInterval(stateTimer)
+  window.removeEventListener('focus', refreshState)
+  ipc.removeListener('workbench-automation:event', receive)
+})
 </script>
 
 <style scoped>

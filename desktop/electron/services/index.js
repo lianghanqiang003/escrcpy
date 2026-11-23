@@ -1,3 +1,4 @@
+export { default as adbRecoveryService } from './adb-recovery/index.js'
 export { default as contextMenuService } from './context-menu/index.js'
 export { default as edgerService } from './edger/index.js'
 export { default as handlesService } from './handles/index.js'

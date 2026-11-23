@@ -10,9 +10,14 @@ export class VideoPacketReader {
 
   push(chunk) {
     this.buffer = Buffer.concat([this.buffer, chunk])
+    return this.drain()
+  }
+
+  // false means the consumer is full: keep the complete packet for the next ACK.
+  drain() {
     if (!this.metadataRead) {
       if (this.buffer.length < 68)
-        return
+        return true
       if (this.buffer.readUInt32BE(64) !== 0x68323634)
         throw new Error('Expected an H.264 scrcpy stream')
       this.metadataRead = true
@@ -21,7 +26,8 @@ export class VideoPacketReader {
     while (this.buffer.length >= 12) {
       const flags = this.buffer.readBigUInt64BE(0)
       if (flags & (1n << 63n)) {
-        this.onPacket({ type: 'size', width: this.buffer.readUInt32BE(4), height: this.buffer.readUInt32BE(8) })
+        if (this.onPacket({ type: 'size', width: this.buffer.readUInt32BE(4), height: this.buffer.readUInt32BE(8) }) === false)
+          return false
         this.buffer = this.buffer.subarray(12)
         continue
       }
@@ -29,16 +35,19 @@ export class VideoPacketReader {
       if (length > 8 * 1024 * 1024)
         throw new Error('Invalid scrcpy packet length')
       if (this.buffer.length < length + 12)
-        return
-      this.onPacket({
+        return true
+      const accepted = this.onPacket({
         type: 'frame',
         config: !!(flags & (1n << 62n)),
         key: !!(flags & (1n << 61n)),
         timestamp: Number(flags & ((1n << 61n) - 1n)),
         data: this.buffer.subarray(12, 12 + length),
       })
+      if (accepted === false)
+        return false
       this.buffer = this.buffer.subarray(12 + length)
     }
+    return true
   }
 }
 

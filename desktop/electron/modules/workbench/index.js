@@ -82,11 +82,10 @@ export default {
         session.waitKey = true
         return
       }
-      // Bound IPC backlog. Resume with config + a keyframe after dropping frames.
-      if (session.pending.size >= 4) {
-        session.waitKey = true
-        return
-      }
+      // H.264 delta frames are references, not disposable display frames. Apply
+      // TCP backpressure until the renderer finishes decoding an in-flight frame.
+      if (session.pending.size >= 4)
+        return false
       if (session.waitKey && !packet.key)
         return
       if (packet.key && session.config)
@@ -200,12 +199,15 @@ export default {
           return { sessionId: id }
         }
         session.control = net.createConnection({ host: '127.0.0.1', port: session.port })
+        session.control.setNoDelay(true)
         session.control.on('data', () => {})
         session.control.on('error', error => send(session, { type: 'error', message: error.message }))
         const reader = new VideoPacketReader(packet => publish(session, packet))
+        session.reader = reader
         session.video.on('data', (data) => {
           try {
-            reader.push(data)
+            if (!reader.push(data))
+              session.video.pause()
           }
           catch (error) {
             send(session, { type: 'error', message: error.message })
@@ -240,8 +242,17 @@ export default {
     })
     ipcMain.on('workbench:ack', (event, deviceId, sessionId, sequence) => {
       const session = sessions.get(`${event.sender.id}:${deviceId}`)
-      if (session?.id === sessionId)
+      if (session?.id === sessionId && !session.closed) {
         session.pending.delete(sequence)
+        try {
+          if (session.reader?.drain())
+            session.video?.resume()
+        }
+        catch (error) {
+          send(session, { type: 'error', message: error.message })
+          stop(session)
+        }
+      }
     })
     ipcMain.handle('workbench:input', (event, input) => {
       const targets = [...new Set(Array.isArray(input?.deviceIds) ? input.deviceIds : [])]

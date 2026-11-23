@@ -40,6 +40,11 @@ COUPON_BAD = ("已抢光", "已领完", "活动已结束", "优惠券已过期",
 VERIFY = ("安全验证", "请完成验证", "拖动滑块", "拖动下方滑块", "身份验证", "请依次点击", "请完成下方验证")
 
 
+def is_short_link(url: str) -> bool:
+    host = (urllib.parse.urlsplit(url).hostname or '').lower()
+    return host == 'u.jd.com' or host == '3.cn' or host.endswith('.3.cn')
+
+
 def normalize(text: str) -> str:
     return re.sub(r"[\s\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]+", "", text or "")
 
@@ -105,7 +110,7 @@ Some JD app versions route u.jd.com straight to a search promotion page. The pub
 short-link page navigates to a tracked item URL instead. Read only that literal
 navigation URL (not arbitrary JavaScript), and retain the full final query string.
 """
-    if (urllib.parse.urlsplit(url).hostname or '').lower() != 'u.jd.com':
+    if not is_short_link(url):
         return url
     class JDRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -114,12 +119,16 @@ navigation URL (not arbitrary JavaScript), and retain the full final query strin
             return super().redirect_request(req, fp, code, msg, headers, newurl)
     opener = urllib.request.build_opener(JDRedirect(), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
     current = url
+    visited = set()
     for _ in range(3):
+        if current in visited:
+            break
+        visited.add(current)
         req = urllib.request.Request(current, headers={'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/129.0 Mobile Safari/537.36'})
         with opener.open(req, timeout=12) as response:
             current = response.url
             body = response.read(300_000).decode('utf-8', errors='replace')
-        if link_kind(current) in {'product', 'coupon'}:
+        if not is_short_link(current) or link_kind(current) in {'product', 'coupon'}:
             return current
         match = re.search(r"\bvar\s+hrl\s*=\s*(['\"])([^'\"]+)\1", body)
         if not match:
@@ -127,7 +136,7 @@ navigation URL (not arbitrary JavaScript), and retain the full final query strin
         current = html.unescape(match.group(2))
         if not allowed_url(current) or urllib.parse.urlsplit(current).scheme not in {'http', 'https'}:
             raise ValueError('短链包含非京东跳转地址，请手动核实')
-    raise RuntimeError('未解析出短链对应的商品／优惠券。请提供完整推广链接，或在手机打开目标商品后继续。')
+    raise RuntimeError('未解析出短链对应的京东页面。请提供完整链接，或在手机打开目标页面后继续。')
 
 
 @dataclass
@@ -484,18 +493,28 @@ class Controller:
                     return
             item["commission_entry_visited"] = True
         self.item_update(item, "opening", f"打开原始链接：{urllib.parse.urlsplit(item['url']).hostname or '京东 App'}")
-        self.adb.open_link(item["url"])
-        if (urllib.parse.urlsplit(item['url']).hostname or '').lower() == 'u.jd.com':
-            self.log('正在跟随原短链的完整推广跳转，定位具体商品')
+        target = item['url']
+        if is_short_link(target):
+            self.log('正在解析京东短链，保留完整领券／推广参数')
             try:
-                expanded = expand_short_link(item['url'])
-                item['resolved_url'] = expanded
-                self.adb.open_link(expanded)
+                target = expand_short_link(target)
+                item['resolved_url'] = target
+                self.log(f"短链已解析：{urllib.parse.urlsplit(target).hostname or '京东 App'}")
             except Exception as e:
-                action = self.pause(f'短链展开未完成：{e}。请在手机确认已进入正确商品，再点继续。', ('continue', 'skip'))
+                action = self.pause(f'短链解析未完成：{e}。请在手机打开目标页面，再点继续检查；也可跳过。', ('continue', 'skip'))
                 if action == 'skip':
                     self.item_update(item, 'skipped', '短链展开失败，已跳过')
                     return
+                # Continue inspects the page the user opened, without replacing it
+                # with the same short link that JD's WebView refused to navigate.
+                target = None
+        resolved_kind = link_kind(item.get('resolved_url', item['url']))
+        if os.environ.get('JD_COUPON_ONLY') == '1' and resolved_kind == 'product':
+            item['resolved_kind'] = resolved_kind
+            self.item_update(item, 'skipped', '短链对应商品页，仅领券脚本已跳过')
+            return
+        if target:
+            self.adb.open_link(target)
         item['expected_sku'] = sku_from_url(item.get('resolved_url', item['url']))
         time.sleep(1.5)
         page = self.screen()
@@ -510,7 +529,7 @@ class Controller:
             if page is None:
                 self.item_update(item, "skipped", "已跳过")
                 return
-        kind = item["kind"]
+        kind = resolved_kind if item['kind'] == 'auto' else item['kind']
         if kind == "auto":
             if page.exact(ADD):
                 kind = "product"

@@ -1400,6 +1400,7 @@
   "workbench.controlHint": "开启操作后，可以直接点击或拖拽手机画面。",
   "workbench.controlMode": "操作模式",
   "workbench.controlOn": "允许操作手机",
+  "workbench.decodeStalled": "视频解码暂时停止，正在重新连接画面",
   "workbench.decoderUnavailable": "当前运行环境不支持视频解码，请使用桌面应用。",
   "workbench.deviceNumber": "设备 {number}",
   "workbench.disconnected": "画面连接中断",
