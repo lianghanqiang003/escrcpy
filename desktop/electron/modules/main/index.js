@@ -8,6 +8,8 @@ export default {
       mainWindow: true,
       browserWindow: {
         persistenceBounds: true,
+        // Live phone previews must keep presenting while this window is occluded.
+        webPreferences: { backgroundThrottling: false },
       },
       hooks: {},
     })
